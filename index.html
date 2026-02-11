@@ -20,7 +20,9 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide@0.344.0"></script>
+    <!-- Supabase JS SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
     <style>
         body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #f3f4f6; -webkit-tap-highlight-color: transparent; }
@@ -35,6 +37,9 @@
         .status-sick { color: #8b5cf6; }
         .status-uniform { color: #ec4899; }
         .scrolling-wrapper { -webkit-overflow-scrolling: touch; display: flex; flex-wrap: nowrap; overflow-x: auto; }
+        .loading-overlay { position: fixed; inset: 0; background: rgba(255,255,255,0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; }
+        .spinner { width: 40px; height: 40px; border: 4px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -43,8 +48,94 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useCallback } = React;
 
+        // =============================================================
+        // ★★★ Supabase 配置 - 请替换为你自己的项目信息 ★★★
+        // =============================================================
+        const SUPABASE_URL = 'https://iuqlialbqubcodxoofal.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_HD6i11vRDnUCAIl1hYaZ1w_8DdEbkLW';
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // =============================================================
+        // Supabase 数据库操作层
+        // =============================================================
+        const DB = {
+            // --- 教师 ---
+            async getTeachers() {
+                const { data, error } = await supabase.from('teachers').select('*').order('id');
+                if (error) { console.error('getTeachers:', error); return null; }
+                return data.map(t => ({ name: t.name, id: t.id }));
+            },
+            async setTeachers(teachers) {
+                await supabase.from('teachers').delete().neq('id', '');
+                const rows = teachers.map(t => ({ id: t.id, name: t.name }));
+                await supabase.from('teachers').upsert(rows);
+            },
+            // --- 配置 ---
+            async getConfig(key, defaultVal) {
+                const { data, error } = await supabase.from('app_config').select('value').eq('key', key).single();
+                if (error || !data) return defaultVal;
+                return data.value;
+            },
+            async setConfig(key, value) {
+                await supabase.from('app_config').upsert({ key, value, updated_at: new Date().toISOString() });
+            },
+            // --- 学生 ---
+            async getStudents() {
+                const { data, error } = await supabase.from('students').select('*');
+                if (error) { console.error('getStudents:', error); return null; }
+                return data.map(row => ({
+                    id: row.id, semester: row.semester, name: row.name, gender: row.gender,
+                    adminClass: row.admin_class, optionClass: row.option_class, teacherName: row.teacher_name,
+                    scores: row.scores || { regular1:0, regular2:0, special1:0, special2:0, runCount:0, runScore:0, stdItem1:0, stdItem2:0, theory:'' },
+                    attendance: row.attendance || [], stdTestRecords: row.std_test_records || {},
+                }));
+            },
+            async saveStudents(students) {
+                const rows = students.map(s => ({
+                    id: s.id, semester: s.semester, name: s.name, gender: s.gender,
+                    admin_class: s.adminClass, option_class: s.optionClass, teacher_name: s.teacherName,
+                    scores: s.scores, attendance: s.attendance || [], std_test_records: s.stdTestRecords || {},
+                    updated_at: new Date().toISOString()
+                }));
+                for (let i = 0; i < rows.length; i += 500) {
+                    const chunk = rows.slice(i, i + 500);
+                    const { error } = await supabase.from('students').upsert(chunk, { onConflict: 'id,semester' });
+                    if (error) console.error('saveStudents chunk:', error);
+                }
+            },
+            async deleteStudent(id, semester) {
+                await supabase.from('students').delete().eq('id', id).eq('semester', semester);
+            },
+            async deleteStudentsBySemester(semester) {
+                await supabase.from('students').delete().eq('semester', semester);
+            },
+            // --- 文档 ---
+            async getDocs(teacherName, category) {
+                const { data, error } = await supabase.from('documents').select('*').eq('teacher_name', teacherName).eq('category', category).order('created_at', { ascending: false });
+                if (error) return [];
+                return data.map(d => ({
+                    id: d.id, name: d.file_name, date: new Date(d.created_at).toLocaleDateString(),
+                    size: d.file_size, type: d.file_type, storagePath: d.storage_path,
+                    url: `${SUPABASE_URL}/storage/v1/object/public/documents/${d.storage_path}`
+                }));
+            },
+            async uploadDoc(teacherName, category, file) {
+                const path = `${teacherName}/${category}/${Date.now()}_${file.name}`;
+                const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file);
+                if (uploadErr) throw uploadErr;
+                await supabase.from('documents').insert({
+                    teacher_name: teacherName, category, file_name: file.name,
+                    file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: file.type, storage_path: path
+                });
+            },
+            async deleteDoc(id, storagePath) {
+                await supabase.storage.from('documents').remove([storagePath]);
+                await supabase.from('documents').delete().eq('id', id);
+            }
+        };
+
         // --- 1. 基础配置 ---
-        const INITIAL_TEACHERS = [{ name: "张老师", id: "T001" }, { name: "王老师", id: "T002" }];
+        const INITIAL_TEACHERS = [{ name: "张老师", id: "T001" }, { name: "王老师", id: "T002" }]; // fallback only
         const DEFAULT_SPORTS_LIST = ["田径", "篮球", "排球", "足球", "乒乓球", "羽毛球", "网球", "垒球", "橄榄球", "武术", "健身健美", "健美操", "瑜伽", "排舞", "啦啦操", "形体", "体育舞蹈", "花样跳绳", "飞盘", "飞镖", "匹克球", "彩带龙"];
         const DEFAULT_SPECIALTY_CONFIG = {};
         const ATTENDANCE_STATUS = {
@@ -206,7 +297,7 @@
             useEffect(() => { setTimeout(onClose, 2000); }, []);
             return <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded shadow-lg z-50 animate-bounce text-sm">{msg}</div>;
         };
-        const LoginPage = ({ onLogin, users }) => {
+        const LoginPage = ({ onLogin, users, adminPassword }) => {
             const [nameInput, setNameInput] = useState('');
             const [idInput, setIdInput] = useState('');
             const [error, setError] = useState('');
@@ -214,7 +305,7 @@
                 e.preventDefault();
                 setError('');
                 if (nameInput === '管理员' || nameInput === 'admin') {
-                    if (idInput === 'admin888') onLogin({ role: 'admin', name: '管理员', id: 'admin' });
+                    if (idInput === adminPassword) onLogin({ role: 'admin', name: '管理员', id: 'admin' });
                     else setError('管理员密码错误');
                 } else {
                     const teacher = users.find(u => u.name === nameInput && u.id === idInput);
@@ -226,10 +317,11 @@
                 <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-indigo-600 p-4">
                     <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md">
                         <h1 className="text-2xl font-bold text-center text-gray-800 mb-2">体育成绩管理系统</h1>
-                        <p className="text-center text-gray-500 text-sm mb-6">教师成绩录入端</p>
+                        <p className="text-center text-gray-500 text-sm mb-1">教师成绩录入端</p>
+                        <p className="text-center text-green-600 text-xs mb-6">☁️ 云端同步版 · 多端数据共享</p>
                         <form onSubmit={handleLogin} className="space-y-4">
                             <div><label className="block text-sm font-medium text-gray-700 mb-1">姓名</label><input type="text" required value={nameInput} onChange={(e) => setNameInput(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors" placeholder="请输入姓名" /></div>
-                            <div><label className="block text-sm font-medium text-gray-700 mb-1">工号 (密码)</label><input type="text" required value={idInput} onChange={(e) => setIdInput(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors" placeholder="请输入工号" /></div>
+                            <div><label className="block text-sm font-medium text-gray-700 mb-1">工号 (密码)</label><input type="password" required value={idInput} onChange={(e) => setIdInput(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors" placeholder="请输入工号" /></div>
                             {error && <p className="text-red-500 text-sm text-center animate-pulse">{error}</p>}
                             <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors shadow-lg">登录</button>
                         </form>
@@ -318,50 +410,44 @@
             );
         };
 
-        // --- Document Manager ---
+        // --- Document Manager (Supabase Storage) ---
         const DocumentManager = ({ category, teacherName, onBack }) => {
             const [docs, setDocs] = useState([]);
+            const [uploading, setUploading] = useState(false);
             const [previewDoc, setPreviewDoc] = useState(null);
-            const storageKey = `pe_docs_${teacherName}_${category}`;
-            useEffect(() => { const saved = localStorage.getItem(storageKey); if (saved) setDocs(JSON.parse(saved)); }, [storageKey]);
-            const saveDocs = (newDocs) => { try { localStorage.setItem(storageKey, JSON.stringify(newDocs)); setDocs(newDocs); } catch (e) { alert("存储空间不足。"); } };
-            const handleUpload = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                if (file.size > 2 * 1024 * 1024) { alert("文件过大！最大 2MB。"); return; }
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                    const newFile = { id: Date.now(), name: file.name, date: new Date().toLocaleDateString(), size: (file.size / 1024).toFixed(1) + ' KB', type: file.type, data: evt.target.result };
-                    saveDocs([...docs, newFile]);
-                };
-                reader.readAsDataURL(file);
-                e.target.value = '';
+            const [loading, setLoading] = useState(true);
+            useEffect(() => { (async () => { setLoading(true); setDocs(await DB.getDocs(teacherName, category)); setLoading(false); })(); }, [teacherName, category]);
+            const handleUpload = async (e) => {
+                const file = e.target.files[0]; if (!file) return;
+                if (file.size > 50 * 1024 * 1024) { alert("文件过大！最大 50MB。"); return; }
+                setUploading(true);
+                try { await DB.uploadDoc(teacherName, category, file); setDocs(await DB.getDocs(teacherName, category)); alert("上传成功！"); }
+                catch (err) { console.error(err); alert("上传失败：" + err.message); }
+                setUploading(false); e.target.value = '';
             };
-            const handleDelete = (id) => { if (confirm("确定删除？")) saveDocs(docs.filter(d => d.id !== id)); };
+            const handleDelete = async (doc) => { if (!confirm("确定删除？")) return; await DB.deleteDoc(doc.id, doc.storagePath); setDocs(docs.filter(d => d.id !== doc.id)); };
             const titleMap = { 'syllabus': '教学大纲', 'schedule': '教学进度表', 'plan': '教案' };
             const handlePreview = (doc) => {
                 const ext = doc.name.split('.').pop().toLowerCase();
-                if (['jpg', 'jpeg', 'png', 'gif', 'pdf'].includes(ext) || doc.type.includes('image') || doc.type.includes('pdf')) { setPreviewDoc({ ...doc, format: 'native' }); } 
+                if (['jpg', 'jpeg', 'png', 'gif', 'pdf'].includes(ext) || doc.type?.includes('image') || doc.type?.includes('pdf')) { setPreviewDoc({ ...doc, format: 'native' }); } 
                 else if (['xls', 'xlsx'].includes(ext)) { setPreviewDoc({ ...doc, format: 'excel' }); } 
-                else { alert("该格式暂不支持在线预览，请下载后查看。"); }
+                else { window.open(doc.url, '_blank'); }
             };
             return (
                 <div className="p-4 bg-white h-full flex flex-col relative">
                     <div className="flex justify-between items-center mb-4 pb-4 border-b"><h3 className="font-bold text-lg">{titleMap[category]}管理</h3><button onClick={onBack} className="text-gray-500">返回</button></div>
-                    <div className="mb-4 bg-blue-50 p-4 rounded-lg border border-blue-100"><label className="block text-sm font-bold text-blue-800 mb-2">上传新文档</label><input type="file" onChange={handleUpload} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700"/><p className="text-xs text-blue-400 mt-2">* 支持 Word, PDF, Excel, PPT 等 (最大 2MB)</p></div>
+                    <div className="mb-4 bg-blue-50 p-4 rounded-lg border border-blue-100"><label className="block text-sm font-bold text-blue-800 mb-2">上传新文档</label><input type="file" onChange={handleUpload} disabled={uploading} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700"/>{uploading && <p className="text-xs text-blue-600 mt-2 animate-pulse">正在上传到云端...</p>}<p className="text-xs text-blue-400 mt-2">* 文件将上传至云端存储（最大 50MB）</p></div>
                     <div className="flex-1 overflow-y-auto">
-                        {docs.length === 0 ? <div className="text-center text-gray-400 mt-10">暂无文档</div> : (<div className="space-y-2">{docs.map(doc => (<div key={doc.id} className="flex justify-between items-center p-3 border rounded hover:bg-gray-50"><div onClick={() => handlePreview(doc)} className="flex-1 overflow-hidden mr-4 cursor-pointer"><div className="font-bold truncate text-sm text-blue-600 hover:underline">{doc.name}</div><div className="text-xs text-gray-500">{doc.date} · {doc.size}</div></div><div className="flex gap-2 shrink-0"><a href={doc.data} download={doc.name} className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a><button onClick={() => handleDelete(doc.id)} className="text-red-500 text-xs border px-2 py-1 rounded hover:bg-red-50">删除</button></div></div>))}</div>)}
+                        {loading ? <div className="text-center text-gray-400 mt-10">加载中...</div> : docs.length === 0 ? <div className="text-center text-gray-400 mt-10">暂无文档</div> : (<div className="space-y-2">{docs.map(doc => (<div key={doc.id} className="flex justify-between items-center p-3 border rounded hover:bg-gray-50"><div onClick={() => handlePreview(doc)} className="flex-1 overflow-hidden mr-4 cursor-pointer"><div className="font-bold truncate text-sm text-blue-600 hover:underline">{doc.name}</div><div className="text-xs text-gray-500">{doc.date} · {doc.size}</div></div><div className="flex gap-2 shrink-0"><a href={doc.url} download={doc.name} target="_blank" rel="noopener" className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a><button onClick={() => handleDelete(doc)} className="text-red-500 text-xs border px-2 py-1 rounded hover:bg-red-50">删除</button></div></div>))}</div>)}
                     </div>
-                    {previewDoc && (<div className="fixed inset-0 z-[100] bg-black bg-opacity-75 flex items-center justify-center p-4"><div className="bg-white rounded-lg w-full h-full max-w-4xl max-h-[90vh] flex flex-col relative"><div className="p-2 border-b flex justify-between items-center"><h3 className="font-bold truncate">{previewDoc.name}</h3><button onClick={() => setPreviewDoc(null)} className="text-2xl">&times;</button></div><div className="flex-1 overflow-auto p-2 bg-gray-100 flex items-center justify-center">{previewDoc.format === 'native' ? (<iframe src={previewDoc.data} className="w-full h-full border-none bg-white"></iframe>) : (<ExcelPreview data={previewDoc.data} />)}</div></div></div>)}
+                    {previewDoc && (<div className="fixed inset-0 z-[100] bg-black bg-opacity-75 flex items-center justify-center p-4"><div className="bg-white rounded-lg w-full h-full max-w-4xl max-h-[90vh] flex flex-col relative"><div className="p-2 border-b flex justify-between items-center"><h3 className="font-bold truncate">{previewDoc.name}</h3><button onClick={() => setPreviewDoc(null)} className="text-2xl">&times;</button></div><div className="flex-1 overflow-auto p-2 bg-gray-100 flex items-center justify-center">{previewDoc.format === 'native' ? (<iframe src={previewDoc.url} className="w-full h-full border-none bg-white"></iframe>) : (<ExcelPreviewUrl url={previewDoc.url} />)}</div></div></div>)}
                 </div>
             );
         };
-        
-        const ExcelPreview = ({ data }) => {
-            const [html, setHtml] = useState('');
-            useEffect(() => {
-                try { const wb = XLSX.read(data.split(',')[1], { type: 'base64' }); const ws = wb.Sheets[wb.SheetNames[0]]; const h = XLSX.utils.sheet_to_html(ws); setHtml(h); } catch(e) { setHtml('<div class="p-4 text-red-500">无法预览此文件</div>'); }
-            }, [data]);
+
+        const ExcelPreviewUrl = ({ url }) => {
+            const [html, setHtml] = useState('<div class="p-4 text-gray-400">加载中...</div>');
+            useEffect(() => { (async () => { try { const res = await fetch(url); const buf = await res.arrayBuffer(); const wb = XLSX.read(buf, { type: 'array' }); setHtml(XLSX.utils.sheet_to_html(wb.Sheets[wb.SheetNames[0]])); } catch(e) { setHtml('<div class="p-4 text-red-500">无法预览</div>'); } })(); }, [url]);
             return <div className="w-full bg-white p-4 overflow-auto" dangerouslySetInnerHTML={{__html: html}} />;
         };
 
@@ -961,6 +1047,7 @@
                 if (activeTab === 'data') {
                     if(confirm("确定删除该学生及其所有成绩吗？")) {
                          setStudents(prev => prev.filter(s => !(s.id === studentId && s.semester === semester)));
+                         DB.deleteStudent(studentId, semester);
                     }
                 } else if (activeTab === 'run') {
                     if(confirm("确定清除该学生的乐跑成绩吗？")) {
@@ -986,6 +1073,7 @@
             const handleClearAllStudents = () => {
                 if(!confirm(`⚠️ 高危操作：确定清空【${semester}】的所有学生数据吗？\n此操作将删除该学期下的学生名单、所有成绩、考勤记录。\n且无法恢复！`)) return;
                 setStudents(prev => prev.filter(s => s.semester !== semester));
+                DB.deleteStudentsBySemester(semester);
                 alert("本学期学生数据已清空");
             };
 
@@ -1167,7 +1255,7 @@
                         '序号': index + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
                         '平时1': s.scores.regular1, '平时2': s.scores.regular2,
                         '专项': ((parseFloat(s.scores.special1||0) + parseFloat(s.scores.special2||0))/2).toFixed(1),
-                        '统考': ((calculateStdTestScore(s.scores.rawItem1, getTestItemsName(semType, s.gender).item1, s.gender) || 0) + (calculateStdTestScore(s.scores.rawItem2, getTestItemsName(semType, s.gender).item2, s.gender) || 0) / 2).toFixed(1),
+                        '统考': ((calculateStdTestScore(s.scores.rawItem1, getTestItemsName(semType, s.gender).item1, s.gender) || 0) + (calculateStdTestScore(s.scores.rawItem2, getTestItemsName(semType, s.gender).item2, s.gender) || 0)) / 2).toFixed(1),
                         '晨跑(次数)': s.scores.runCount, '晨跑(成绩)': s.scores.runScore,
                     };
                     if (semType === 'spring') row['理论'] = s.scores.theory;
@@ -1388,38 +1476,128 @@
 
         const App = () => {
             const [user, setUser] = useState(null);
-            
-            const [students, setStudents] = useState(() => JSON.parse(localStorage.getItem('pe_students')) || []);
-            const [teachers, setTeachers] = useState(() => JSON.parse(localStorage.getItem('pe_teachers')) || INITIAL_TEACHERS);
-            const [sportsList, setSportsList] = useState(() => JSON.parse(localStorage.getItem('pe_sportsList')) || DEFAULT_SPORTS_LIST);
-            const [specialtyConfig, setConfig] = useState(() => JSON.parse(localStorage.getItem('pe_specConfig')) || DEFAULT_SPECIALTY_CONFIG);
+            const [loading, setLoading] = useState(true);
+            const [students, setStudents] = useState([]);
+            const [teachers, setTeachers] = useState(INITIAL_TEACHERS);
+            const [sportsList, setSportsList] = useState(DEFAULT_SPORTS_LIST);
+            const [specialtyConfig, setConfig] = useState(DEFAULT_SPECIALTY_CONFIG);
             const [semester, setSemester] = useState(getDefaultSemester());
+            const [adminPassword, setAdminPassword] = useState('admin888');
+            const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
-            useEffect(() => localStorage.setItem('pe_students', JSON.stringify(students)), [students]);
-            useEffect(() => localStorage.setItem('pe_teachers', JSON.stringify(teachers)), [teachers]);
-            useEffect(() => localStorage.setItem('pe_sportsList', JSON.stringify(sportsList)), [sportsList]);
-            useEffect(() => localStorage.setItem('pe_specConfig', JSON.stringify(specialtyConfig)), [specialtyConfig]);
+            // --- 初始化：从 Supabase 加载所有数据 ---
+            useEffect(() => {
+                (async () => {
+                    setLoading(true);
+                    try {
+                        const [dbTeachers, dbStudents, dbSportsList, dbSpecConfig, dbAdminPwd] = await Promise.all([
+                            DB.getTeachers(),
+                            DB.getStudents(),
+                            DB.getConfig('sports_list', DEFAULT_SPORTS_LIST),
+                            DB.getConfig('specialty_config', DEFAULT_SPECIALTY_CONFIG),
+                            DB.getConfig('admin_password', 'admin888'),
+                        ]);
+                        if (dbTeachers && dbTeachers.length > 0) setTeachers(dbTeachers);
+                        if (dbStudents) setStudents(dbStudents);
+                        if (dbSportsList) setSportsList(dbSportsList);
+                        if (dbSpecConfig) setConfig(dbSpecConfig);
+                        if (dbAdminPwd) setAdminPassword(dbAdminPwd);
+                    } catch (err) {
+                        console.error('初始化加载失败:', err);
+                        // 回退到 localStorage（兼容旧数据）
+                        try {
+                            const ls = JSON.parse(localStorage.getItem('pe_students'));
+                            if (ls && ls.length > 0) {
+                                setStudents(ls);
+                                alert('⚠️ 云端连接失败，已加载本地缓存数据。请检查 Supabase 配置。');
+                            }
+                        } catch(e) {}
+                    }
+                    setLoading(false);
+                })();
+            }, []);
+
+            // --- 学生数据变化时自动同步到 Supabase ---
+            const saveTimerRef = React.useRef(null);
+            const isInitialLoadRef = React.useRef(true);
+            useEffect(() => {
+                if (isInitialLoadRef.current) { isInitialLoadRef.current = false; return; }
+                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                setSaveStatus('saving');
+                saveTimerRef.current = setTimeout(async () => {
+                    try {
+                        await DB.saveStudents(students);
+                        setSaveStatus('saved');
+                        setTimeout(() => setSaveStatus(''), 2000);
+                    } catch (err) {
+                        console.error('保存失败:', err);
+                        setSaveStatus('error');
+                    }
+                }, 1500); // 1.5秒防抖
+                return () => clearTimeout(saveTimerRef.current);
+            }, [students]);
+
+            // --- 教师数据同步 ---
+            const teacherInitRef = React.useRef(true);
+            useEffect(() => {
+                if (teacherInitRef.current) { teacherInitRef.current = false; return; }
+                DB.setTeachers(teachers);
+            }, [teachers]);
+
+            // --- 配置数据同步 ---
+            const sportsInitRef = React.useRef(true);
+            useEffect(() => {
+                if (sportsInitRef.current) { sportsInitRef.current = false; return; }
+                DB.setConfig('sports_list', sportsList);
+            }, [sportsList]);
+
+            const configInitRef = React.useRef(true);
+            useEffect(() => {
+                if (configInitRef.current) { configInitRef.current = false; return; }
+                DB.setConfig('specialty_config', specialtyConfig);
+            }, [specialtyConfig]);
+
             useEffect(() => { if(window.lucide) window.lucide.createIcons(); }, []);
 
-            if (!user) return <LoginPage onLogin={setUser} users={teachers} />;
+            if (loading) return (
+                <div className="loading-overlay">
+                    <div className="spinner"></div>
+                    <p className="mt-4 text-gray-500 text-sm">正在连接云端数据...</p>
+                </div>
+            );
 
-            return user.role === 'admin' 
-                ? <AdminPanel 
-                    students={students} setStudents={setStudents} 
-                    semester={semester} setSemester={setSemester} 
-                    onLogout={() => setUser(null)}
-                    sportsList={sportsList} setSportsList={setSportsList}
-                    config={specialtyConfig} setConfig={setConfig}
-                    teachers={teachers} setTeachers={setTeachers}
-                  />
-                : <TeacherPanel 
-                    currentUser={user} 
-                    students={students} setStudents={setStudents}
-                    semester={semester} setSemester={setSemester}
-                    onLogout={() => setUser(null)}
-                    sportsList={sportsList}
-                    specialtyConfig={specialtyConfig}
-                  />;
+            if (!user) return <LoginPage onLogin={setUser} users={teachers} adminPassword={adminPassword} />;
+
+            const SaveIndicator = () => {
+                if (!saveStatus) return null;
+                const styles = { saving: 'bg-yellow-100 text-yellow-700', saved: 'bg-green-100 text-green-700', error: 'bg-red-100 text-red-700' };
+                const labels = { saving: '☁️ 正在同步...', saved: '✅ 已同步到云端', error: '❌ 同步失败，请检查网络' };
+                return <div className={`fixed bottom-4 right-4 px-3 py-1.5 rounded-full text-xs z-[200] shadow ${styles[saveStatus]}`}>{labels[saveStatus]}</div>;
+            };
+
+            return (
+                <>
+                    <SaveIndicator />
+                    {user.role === 'admin' 
+                        ? <AdminPanel 
+                            students={students} setStudents={setStudents} 
+                            semester={semester} setSemester={setSemester} 
+                            onLogout={() => setUser(null)}
+                            sportsList={sportsList} setSportsList={setSportsList}
+                            config={specialtyConfig} setConfig={setConfig}
+                            teachers={teachers} setTeachers={setTeachers}
+                          />
+                        : <TeacherPanel 
+                            currentUser={user} 
+                            students={students} setStudents={setStudents}
+                            semester={semester} setSemester={setSemester}
+                            onLogout={() => setUser(null)}
+                            sportsList={sportsList}
+                            specialtyConfig={specialtyConfig}
+                          />
+                    }
+                </>
+            );
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
