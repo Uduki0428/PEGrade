@@ -2,48 +2,39 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <!-- 优化移动端视口：禁止缩放，模拟原生 App 体验 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     
-    <!-- PWA 配置：全屏显示，设置主题色 -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#2563eb">
     <meta name="format-detection" content="telephone=no">
     
-    <!-- 内置 Manifest，支持添加到主屏幕 -->
-    <link rel="manifest" href='data:application/manifest+json;charset=utf-8,%7B%22name%22%3A%22%E9%AB%98%E6%A0%A1%E4%BD%93%E8%82%B2%E8%AF%BE%E6%88%90%E7%BB%A9%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F%22%2C%22short_name%22%3A%22%E4%BD%93%E8%82%B2%E8%AF%84%E5%88%86%22%2C%22display%22%3A%22standalone%22%2C%22start_url%22%3A%22.%22%2C%22theme_color%22%3A%22%232563eb%22%2C%22background_color%22%3A%22%23f3f4f6%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22https%3A%2F%2Fimg.icons8.com%2Ffluency%2F96%2Frunning.png%22%2C%22sizes%22%3A%2296x96%22%2C%22type%22%3A%22image%2Fpng%22%7D%5D%7D' />
-    <!-- 图标支持 (使用在线图标作为示例) -->
+    <link rel="manifest" href='data:application/manifest+json;charset=utf-8,%7B%22name%22%3A%22%E4%BD%93%E8%82%B2%E8%AF%BE%E7%AE%A1%E7%90%86%22%2C%22short_name%22%3A%22%E4%BD%93%E8%82%B2%E8%AF%84%E5%88%86%22%2C%22display%22%3A%22standalone%22%2C%22start_url%22%3A%22.%22%2C%22theme_color%22%3A%22%232563eb%22%2C%22background_color%22%3A%22%23f3f4f6%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22https%3A%2F%2Fimg.icons8.com%2Ffluency%2F96%2Frunning.png%22%2C%22sizes%22%3A%2296x96%22%2C%22type%22%3A%22image%2Fpng%22%7D%5D%7D' />
     <link rel="apple-touch-icon" href="https://img.icons8.com/fluency/96/running.png">
     <link rel="icon" type="image/png" href="https://img.icons8.com/fluency/96/running.png">
 
     <title>高校体育课成绩管理系统</title>
     
-    <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- SheetJS for Excel -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-
-    <!-- Lucide Icons -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
         body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #f3f4f6; -webkit-tap-highlight-color: transparent; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .touch-target { min-height: 44px; min-width: 44px; }
-        /* 表格输入框获得焦点时的样式 */
         .input-cell:focus { outline: 2px solid #3b82f6; background-color: #eff6ff; }
-        /* 移动端输入框字体优化，防止 iOS 自动放大 */
         input, select, textarea { font-size: 16px !important; }
+        .status-normal { color: #10b981; }
+        .status-absent { color: #ef4444; }
+        .status-late { color: #f59e0b; }
+        .status-leave { color: #3b82f6; }
+        .status-sick { color: #8b5cf6; }
+        .status-uniform { color: #ec4899; }
+        .scrolling-wrapper { -webkit-overflow-scrolling: touch; display: flex; flex-wrap: nowrap; overflow-x: auto; }
     </style>
 </head>
 <body>
@@ -52,104 +43,139 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useCallback } = React;
 
-        // --- 1. 配置与标准数据 ---
-
-        // 清空默认学生数据
-        const INITIAL_STUDENTS = [];
-
-        const INITIAL_TEACHERS = [
-            { name: "张老师", id: "T001" },
-            { name: "王老师", id: "T002" }
-        ];
-
-        // 评分标准表
+        // --- 1. 基础配置 ---
+        const INITIAL_TEACHERS = [{ name: "张老师", id: "T001" }, { name: "王老师", id: "T002" }];
+        const DEFAULT_SPORTS_LIST = ["田径", "篮球", "排球", "足球", "乒乓球", "羽毛球", "网球", "垒球", "橄榄球", "武术", "健身健美", "健美操", "瑜伽", "排舞", "啦啦操", "形体", "体育舞蹈", "花样跳绳", "飞盘", "飞镖", "匹克球", "彩带龙"];
+        const DEFAULT_SPECIALTY_CONFIG = {};
+        const ATTENDANCE_STATUS = {
+            'normal': { label: '正常', symbol: '', color: 'text-green-600' },
+            'absent': { label: '无故旷课', symbol: '○', color: 'text-red-600' },
+            'late': { label: '迟到', symbol: 'Φ', color: 'text-yellow-600' },
+            'personal': { label: '事假', symbol: 'S', color: 'text-blue-600' },
+            'sick': { label: '病假', symbol: 'B', color: 'text-purple-600' },
+            'uniform': { label: '服装不符', symbol: '△', color: 'text-pink-600' },
+            'other': { label: '其他', symbol: '备注', color: 'text-gray-600' }
+        };
         const SCORING_STANDARDS = {
-            // 长跑使用 mm.ss 格式，需转换为秒
-            '1200m跑': { type: 'long_run', gender: '女', table: [[5.14, 100], [5.40, 90], [6.07, 80], [6.33, 70], [7.00, 60], [7.15, 50], [7.30, 40], [8.30, 0]] },
-            '1500m跑': { type: 'long_run', gender: '男', table: [[5.14, 100], [5.40, 90], [6.07, 80], [6.33, 70], [7.00, 60], [7.18, 50], [7.35, 40], [8.46, 0]] },
-            // 立定跳远 (米)
-            '立定跳远_男': { type: 'high_better', gender: '男', table: [[2.73, 100], [2.57, 90], [2.41, 80], [2.26, 70], [2.10, 60], [2.05, 50], [2.00, 40], [1.80, 0]] },
-            '立定跳远_女': { type: 'high_better', gender: '女', table: [[2.07, 100], [1.95, 90], [1.83, 80], [1.72, 70], [1.60, 60], [1.54, 50], [1.49, 40], [1.25, 0]] },
-            // 短跑 (秒)
-            '100m跑_男': { type: 'low_better', gender: '男', table: [[13.40, 100], [14.00, 90], [14.60, 80], [15.20, 70], [15.80, 60], [16.40, 50], [17.00, 40], [19.40, 0]] },
-            '100m跑_女': { type: 'low_better', gender: '女', table: [[16.40, 100], [17.00, 90], [17.60, 80], [18.20, 70], [18.80, 60], [19.40, 50], [20.00, 40], [22.40, 0]] },
-            // 力量 (个)
-            '俯卧撑': { type: 'high_better', gender: '男', table: [[40, 100], [35, 90], [30, 80], [25, 70], [20, 60], [15, 50], [10, 40], [0, 0]] },
-            '仰卧起坐': { type: 'high_better', gender: '女', table: [[56, 100], [49, 90], [42, 80], [35, 70], [28, 60], [26, 50], [24, 40], [14, 0]] }
+            '1200m跑': { type: 'time', gender: '女', table: [[5.14, 100], [5.40, 90], [6.07, 80], [6.33, 70], [7.00, 60], [7.15, 50], [7.30, 40], [8.30, 0]] },
+            '1500m跑': { type: 'time', gender: '男', table: [[5.14, 100], [5.40, 90], [6.07, 80], [6.33, 70], [7.00, 60], [7.18, 50], [7.35, 40], [8.46, 0]] },
+            '立定跳远_男': { type: 'distance', gender: '男', table: [[2.73, 100], [2.57, 90], [2.41, 80], [2.26, 70], [2.10, 60], [2.05, 50], [2.00, 40], [1.80, 0]] },
+            '立定跳远_女': { type: 'distance', gender: '女', table: [[2.07, 100], [1.95, 90], [1.83, 80], [1.72, 70], [1.60, 60], [1.54, 50], [1.49, 40], [1.25, 0]] },
+            '100m跑_男': { type: 'time', gender: '男', table: [[13.40, 100], [14.00, 90], [14.60, 80], [15.20, 70], [15.80, 60], [16.40, 50], [17.00, 40], [19.40, 0]] },
+            '100m跑_女': { type: 'time', gender: '女', table: [[16.40, 100], [17.00, 90], [17.60, 80], [18.20, 70], [18.80, 60], [19.40, 50], [20.00, 40], [22.40, 0]] },
+            '俯卧撑': { type: 'count', gender: '男', table: [[40, 100], [35, 90], [30, 80], [25, 70], [20, 60], [15, 50], [10, 40], [0, 0]] },
+            '仰卧起坐': { type: 'count', gender: '女', table: [[56, 100], [49, 90], [42, 80], [35, 70], [28, 60], [26, 50], [24, 40], [14, 0]] }
         };
 
-        // --- Helper Functions ---
-
+        // --- 2. 辅助函数 ---
         const parseInputToValue = (input, isLongRun) => {
-            if (!input) return 0;
-            const str = String(input);
+            if (!input && input !== 0) return null;
+            const str = String(input).trim();
+            if (str === '') return null;
             if (isLongRun) {
                 const parts = str.split('.');
                 const min = parseInt(parts[0] || 0);
                 const sec = parseInt(parts[1] || 0);
                 return min * 60 + sec;
-            } else {
-                return parseFloat(str);
             }
+            return parseFloat(str);
         };
-
-        const calculateStandardScore = (inputVal, itemName, gender) => {
-            let key = itemName;
-            if (itemName === '立定跳远' || itemName === '100m跑') {
-                key = `${itemName}_${gender}`;
-            }
-            
-            const standard = SCORING_STANDARDS[key];
-            if (!standard) return null;
-
-            const isLongRun = standard.type === 'long_run';
-            const val = parseInputToValue(inputVal, isLongRun);
-            
-            const table = standard.table.map(([threshold, score]) => {
-                const tVal = isLongRun ? parseInputToValue(threshold, true) : threshold;
-                return [tVal, score];
-            });
-
-            if (standard.type === 'high_better') {
-                if (val >= table[0][0]) return 100; 
-                if (val <= table[table.length - 1][0]) return 0; 
+        const calculateScoreGeneric = (val, type, tableOrConfig) => {
+            if (val === null || val === undefined || isNaN(val)) return 0;
+            let table = [];
+            if (!Array.isArray(tableOrConfig)) {
+                const c = tableOrConfig;
+                table = [[c.p100, 100], [c.p60, 60], [c.p0, 0]];
+            } else { table = tableOrConfig; }
+            const isLowBetter = type === 'time';
+            const bestVal = table[0][0];
+            const worstVal = table[table.length - 1][0];
+            if (isLowBetter) {
+                if (val <= bestVal) return 100;
+                if (val >= worstVal) return 0;
             } else {
-                if (val <= table[0][0]) return 100;
-                if (val >= table[table.length - 1][0]) return 0; 
+                if (val >= bestVal) return 100;
+                if (val <= worstVal) return 0;
             }
-
             for (let i = 0; i < table.length - 1; i++) {
-                const [currentVal, currentScore] = table[i];
+                const [currVal, currScore] = table[i];
                 const [nextVal, nextScore] = table[i+1];
-
                 let inRange = false;
-                if (standard.type === 'high_better') {
-                    if (val <= currentVal && val >= nextVal) inRange = true;
-                } else {
-                    if (val >= currentVal && val <= nextVal) inRange = true;
-                }
-
+                if (isLowBetter) { if (val >= currVal && val <= nextVal) inRange = true; } 
+                else { if (val <= currVal && val >= nextVal) inRange = true; }
                 if (inRange) {
-                    const ratio = (val - currentVal) / (nextVal - currentVal);
-                    const score = currentScore + ratio * (nextScore - currentScore);
-                    return parseFloat(score.toFixed(1)); 
+                    const ratio = (val - currVal) / (nextVal - currVal);
+                    const score = currScore + ratio * (nextScore - currScore);
+                    return Math.round(score * 10) / 10; 
                 }
             }
             return 0;
         };
-
+        const calculateStdTestScore = (inputVal, itemName, gender) => {
+            let key = itemName;
+            if (['立定跳远', '100m跑'].includes(itemName)) key = `${itemName}_${gender}`;
+            const standard = SCORING_STANDARDS[key];
+            if (!standard) return null;
+            const isLongRun = ['1200m跑', '1500m跑'].includes(itemName);
+            const val = parseInputToValue(inputVal, isLongRun);
+            const processedTable = standard.table.map(([t, s]) => {
+                return [isLongRun ? parseInputToValue(t, true) : t, s];
+            });
+            return calculateScoreGeneric(val, standard.type, processedTable);
+        };
+        const getBestRecord = (records, type) => {
+            const validRecords = records.filter(r => r !== "" && r !== null && r !== undefined);
+            if (validRecords.length === 0) return "";
+            if (type === 'time') return validRecords.sort((a, b) => parseFloat(a) - parseFloat(b))[0];
+            return validRecords.sort((a, b) => parseFloat(b) - parseFloat(a))[0];
+        };
+        const getTestItemsName = (semesterType, gender) => {
+            if (semesterType === 'fall') {
+                return { item1: gender === '男' ? '1500m跑' : '1200m跑', item2: '立定跳远', type1: 'time', type2: 'distance', display1: '男:1500m; 女:1200m', display2: '立定跳远' };
+            } else {
+                return { item1: gender === '男' ? '俯卧撑' : '仰卧起坐', item2: '100m跑', type1: 'count', type2: 'time', display1: '男:俯卧撑; 女:仰卧起坐', display2: '100m跑' };
+            }
+        };
+        const calculateSpecialtyScore = (val, gender, config) => {
+            if (!config) return val; 
+            if (config.type === 'score') return parseFloat(val) || 0;
+            const isMale = gender === '男';
+            const thresholds = { p0: parseFloat(isMale ? config.m_0 : config.f_0), p60: parseFloat(isMale ? config.m_60 : config.f_60), p100: parseFloat(isMale ? config.m_100 : config.f_100) };
+            const parsedVal = parseFloat(val);
+            return calculateScoreGeneric(parsedVal, config.type, thresholds);
+        };
+        const calculateFinalScore = (scores, semesterType) => {
+            const { regular1 = 0, regular2 = 0, special1 = 0, special2 = 0, runScore = 0, stdItem1 = 0, stdItem2 = 0, theory, isRunFailed = false } = scores;
+            const theoryScore = theory === '' || theory === null ? 0 : parseFloat(theory);
+            
+            const specialAvg = (parseFloat(special1||0) + parseFloat(special2||0)) / 2;
+            const stdTotal = (parseFloat(stdItem1||0) + parseFloat(stdItem2||0)) / 2;
+            let total = 0;
+            if (semesterType === 'fall') total = (regular1 * 0.1) + (regular2 * 0.1) + (stdTotal * 0.3) + (runScore * 0.1) + (specialAvg * 0.4);
+            else total = (regular1 * 0.05) + (regular2 * 0.05) + (theoryScore * 0.1) + (stdTotal * 0.3) + (runScore * 0.1) + (specialAvg * 0.4);
+            if (isRunFailed && total >= 60) return "59.0";
+            return total.toFixed(1);
+        };
+        const getAttendanceSummary = (attendance) => {
+            if (!attendance || attendance.length === 0) return "无考勤记录";
+            const summary = {};
+            let abnormalCount = 0;
+            attendance.forEach(rec => {
+                if (rec.status !== 'normal') {
+                    summary[rec.status] = (summary[rec.status] || 0) + 1;
+                    abnormalCount++;
+                }
+            });
+            if (abnormalCount === 0) return "全勤，无异常";
+            return Object.entries(summary).map(([status, count]) => `${ATTENDANCE_STATUS[status]?.label}${count}次`).join('，');
+        };
         const getDefaultSemester = () => {
             const now = new Date();
             const month = now.getMonth(); 
             const year = now.getFullYear();
-            if (month >= 8 || month <= 1) {
-                const academicYear = month >= 8 ? year : year - 1;
-                return `${academicYear}-${academicYear + 1}-1`;
-            } else {
-                return `${year - 1}-${year}-2`;
-            }
+            if (month >= 8 || month <= 1) return `${month >= 8 ? year : year - 1}-${month >= 8 ? year + 1 : year}-1`;
+            return `${year - 1}-${year}-2`;
         };
-
         const getSemesterOptions = () => {
             const now = new Date();
             const currentYear = now.getFullYear();
@@ -161,103 +187,49 @@
             }
             return options;
         };
+        const getSemesterType = (semStr) => semStr.slice(-1) === '1' ? 'fall' : 'spring';
 
-        const getSemesterType = (semStr) => {
-            const lastChar = semStr.slice(-1);
-            return lastChar === '1' ? 'fall' : 'spring';
-        };
-
-        const getTestItemsName = (semesterType, gender) => {
-            if (semesterType === 'fall') {
-                return { item1: gender === '男' ? '1500m跑' : '1200m跑', item2: '立定跳远' };
-            } else {
-                return { item1: gender === '男' ? '俯卧撑' : '仰卧起坐', item2: '100m跑' };
-            }
-        };
-
-        const calculateFinalScore = (scores, semesterType) => {
-            const { regular1 = 0, regular2 = 0, special1 = 0, special2 = 0, runScore = 0, stdItem1 = 0, stdItem2 = 0, theory = 0 } = scores;
-            const specialAvg = (parseFloat(special1) + parseFloat(special2)) / 2;
-            const stdTotal = (parseFloat(stdItem1) + parseFloat(stdItem2)) / 2;
-            let total = 0;
-            if (semesterType === 'fall') {
-                total = (regular1 * 0.1) + (regular2 * 0.1) + (stdTotal * 0.3) + (runScore * 0.1) + (specialAvg * 0.4);
-            } else {
-                total = (regular1 * 0.05) + (regular2 * 0.05) + (theory * 0.1) + (stdTotal * 0.3) + (runScore * 0.1) + (specialAvg * 0.4);
-            }
-            return total.toFixed(1);
-        };
-
-        // --- Components ---
-
-        const Icon = ({ name, size = 20, className }) => {
+        // --- 3. 组件 ---
+        const Icon = ({ name, size = 18, className }) => {
             const [svgHtml, setSvgHtml] = useState('');
             useEffect(() => {
                 if (window.lucide && window.lucide.icons) {
                     const pascalName = name.replace(/(^\w|-\w)/g, (c) => c.replace(/-/, "").toUpperCase());
                     const iconNode = window.lucide.icons[pascalName] || window.lucide.icons[name];
-                    if (iconNode && iconNode.toSvg) {
-                         setSvgHtml(iconNode.toSvg({ width: size, height: size, class: className }));
-                    }
+                    if (iconNode && typeof iconNode.toSvg === 'function') setSvgHtml(iconNode.toSvg({ width: size, height: size, class: className }));
                 }
             }, [name, size, className]);
-            if (!svgHtml) return <span className={className}>{name}</span>;
-            return <span style={{ display: 'contents' }} dangerouslySetInnerHTML={{ __html: svgHtml }} />;
+            if (!svgHtml) return <span className={className}></span>; 
+            return <span style={{ display: 'inline-flex' }} dangerouslySetInnerHTML={{ __html: svgHtml }} />;
         };
-
-        const Toast = ({ message, onClose }) => {
-            useEffect(() => {
-                const timer = setTimeout(onClose, 3000);
-                return () => clearTimeout(timer);
-            }, [onClose]);
-            return (
-                <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-full shadow-xl z-[9999] flex items-center animate-bounce">
-                    <Icon name="check-circle" size={20} className="text-green-400 mr-2"/>
-                    <span className="text-sm font-medium">{message}</span>
-                </div>
-            );
+        const Toast = ({ msg, onClose }) => {
+            useEffect(() => { setTimeout(onClose, 2000); }, []);
+            return <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded shadow-lg z-50 animate-bounce text-sm">{msg}</div>;
         };
-
-        // 统一登录页 - 修改顺序：姓名在前，工号在后
         const LoginPage = ({ onLogin, users }) => {
             const [nameInput, setNameInput] = useState('');
             const [idInput, setIdInput] = useState('');
             const [error, setError] = useState('');
-
             const handleLogin = (e) => {
                 e.preventDefault();
                 setError('');
-                // 管理员判断逻辑：姓名输入“管理员”或“admin”，工号输入“admin888”
                 if (nameInput === '管理员' || nameInput === 'admin') {
-                    if (idInput === 'admin888') {
-                        onLogin({ role: 'admin', name: '管理员', id: 'admin' });
-                    } else {
-                        setError('管理员密码错误');
-                    }
+                    if (idInput === 'admin888') onLogin({ role: 'admin', name: '管理员', id: 'admin' });
+                    else setError('管理员密码错误');
                 } else {
                     const teacher = users.find(u => u.name === nameInput && u.id === idInput);
-                    if (teacher) {
-                        onLogin({ role: 'teacher', ...teacher });
-                    } else {
-                        setError('教师信息未找到，请核对姓名和工号');
-                    }
+                    if (teacher) onLogin({ role: 'teacher', ...teacher });
+                    else setError('教师信息未找到，请核对姓名和工号');
                 }
             };
-
             return (
                 <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-indigo-600 p-4">
                     <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md">
                         <h1 className="text-2xl font-bold text-center text-gray-800 mb-2">体育成绩管理系统</h1>
                         <p className="text-center text-gray-500 text-sm mb-6">教师成绩录入端</p>
                         <form onSubmit={handleLogin} className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">姓名</label>
-                                <input type="text" required value={nameInput} onChange={(e) => setNameInput(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors" placeholder="请输入姓名" />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">工号 (密码)</label>
-                                <input type="text" required value={idInput} onChange={(e) => setIdInput(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors" placeholder="请输入工号" />
-                            </div>
+                            <div><label className="block text-sm font-medium text-gray-700 mb-1">姓名</label><input type="text" required value={nameInput} onChange={(e) => setNameInput(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors" placeholder="请输入姓名" /></div>
+                            <div><label className="block text-sm font-medium text-gray-700 mb-1">工号 (密码)</label><input type="text" required value={idInput} onChange={(e) => setIdInput(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-colors" placeholder="请输入工号" /></div>
                             {error && <p className="text-red-500 text-sm text-center animate-pulse">{error}</p>}
                             <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors shadow-lg">登录</button>
                         </form>
@@ -266,95 +238,387 @@
             );
         };
 
-        // --- 抽离的打分弹窗组件 ---
-        const GradingModal = ({ student, semester, onClose, onSave }) => {
-            const [scores, setScores] = useState({ ...student.scores });
-            const [rawInputs, setRawInputs] = useState({
-                item1: student.scores.rawItem1 || '',
-                item2: student.scores.rawItem2 || ''
-            });
+        const SpecConfigBlock = ({ title, specData, onChange }) => (
+            <div className="border p-3 rounded mb-4 bg-gray-50">
+                <h4 className="font-bold mb-2 text-sm">{title}</h4>
+                <div className="flex items-center gap-2 mb-2"><label className="text-xs">性质:</label><select className="border rounded text-xs p-1" value={specData.type || 'score'} onChange={e => onChange({...specData, type: e.target.value})}><option value="score">分值 (分)</option><option value="time">时间 (秒)</option><option value="distance">距离 (米)</option></select></div>
+                {specData.type !== 'score' && (
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                        <div className="font-bold text-blue-600">男生标准</div>
+                        <div className="font-bold text-pink-600">女生标准</div>
+                        <div className="flex gap-1 items-center"><span>100分:</span><input type="number" className="border w-16 p-1" value={specData.m_100||''} onChange={e=>onChange({...specData, m_100:e.target.value})} /></div>
+                        <div className="flex gap-1 items-center"><span>100分:</span><input type="number" className="border w-16 p-1" value={specData.f_100||''} onChange={e=>onChange({...specData, f_100:e.target.value})} /></div>
+                        <div className="flex gap-1 items-center"><span>60分:</span><input type="number" className="border w-16 p-1" value={specData.m_60||''} onChange={e=>onChange({...specData, m_60:e.target.value})} /></div>
+                        <div className="flex gap-1 items-center"><span>60分:</span><input type="number" className="border w-16 p-1" value={specData.f_60||''} onChange={e=>onChange({...specData, f_60:e.target.value})} /></div>
+                        <div className="flex gap-1 items-center"><span>0分:</span><input type="number" className="border w-16 p-1" value={specData.m_0||''} onChange={e=>onChange({...specData, m_0:e.target.value})} /></div>
+                        <div className="flex gap-1 items-center"><span>0分:</span><input type="number" className="border w-16 p-1" value={specData.f_0||''} onChange={e=>onChange({...specData, f_0:e.target.value})} /></div>
+                    </div>
+                )}
+            </div>
+        );
 
-            const semType = getSemesterType(semester);
-            const testNames = getTestItemsName(semType, student.gender);
+        const AdminStandardsPanel = ({ sportsList, setSportsList, config, setConfig }) => {
+            const [draftSpec, setDraftSpec] = useState(null);
+            const [selectedSport, setSelectedSport] = useState(sportsList[0] || "");
+            const [newSport, setNewSport] = useState("");
+            useEffect(() => {
+                if (selectedSport) {
+                    setDraftSpec(null);
+                    setTimeout(() => {
+                        const loadedConfig = config[selectedSport] ? JSON.parse(JSON.stringify(config[selectedSport])) : { spec1: {type:'score'}, spec2: {type:'score'} };
+                        setDraftSpec(loadedConfig);
+                    }, 0);
+                }
+            }, [selectedSport, config]);
 
-            const updateScore = (field, value) => {
-                setScores(prev => ({ ...prev, [field]: value }));
-            };
+            useEffect(() => {
+                if (sportsList.length > 0 && !sportsList.includes(selectedSport)) {
+                    setSelectedSport(sportsList[0]);
+                } else if (sportsList.length === 0) {
+                    setSelectedSport("");
+                    setDraftSpec(null);
+                }
+            }, [sportsList]);
 
-            const handleRawInput = (itemKey, value, scoreField, itemName) => {
-                setRawInputs(prev => ({ ...prev, [itemKey]: value }));
-                const calcScore = calculateStandardScore(value, itemName, student.gender);
-                if (calcScore !== null) {
-                    updateScore(scoreField, calcScore);
+            const handleAddSport = () => {
+                if(newSport && !sportsList.includes(newSport)) {
+                    const updatedList = [...sportsList, newSport];
+                    setSportsList(updatedList);
+                    setSelectedSport(newSport);
+                    setNewSport("");
                 }
             };
+            const handleDeleteSport = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!selectedSport) return;
+                if(confirm(`确定删除 ${selectedSport} 吗？`)) {
+                    const newList = sportsList.filter(s => s !== selectedSport);
+                    setSportsList(newList);
+                    const newConfig = JSON.parse(JSON.stringify(config));
+                    delete newConfig[selectedSport];
+                    setConfig(newConfig);
+                }
+            };
+            const updateDraft = (key, val) => setDraftSpec(prev => ({ ...prev, [key]: val }));
+            const handleSave = () => { setConfig(prev => ({ ...prev, [selectedSport]: draftSpec })); alert(`已保存 ${selectedSport} 的考核标准！`); };
+            if (!selectedSport) return <div className="p-4">请先新增体育项目</div>;
+            if (!draftSpec) return <div className="p-4">加载中...</div>;
+            return (
+                <div className="p-4 bg-white rounded shadow h-full overflow-y-auto flex flex-col">
+                    <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold">专项考核标准设置</h3><button onClick={handleSave} className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-bold shadow hover:bg-blue-700">保存配置</button></div>
+                    <div className="flex gap-2 mb-4">
+                        <select className="border p-2 rounded flex-1" value={selectedSport} onChange={e=>setSelectedSport(e.target.value)}>{sportsList.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                        <button onClick={handleDeleteSport} className="text-red-500 border p-2 rounded px-3 hover:bg-red-50">删</button>
+                    </div>
+                    <div className="flex gap-2 mb-6 border-b pb-4"><input className="border p-2 rounded flex-1 text-sm" placeholder="新项目名称" value={newSport} onChange={e=>setNewSport(e.target.value)}/><button onClick={handleAddSport} className="bg-green-600 text-white px-3 rounded text-sm hover:bg-green-700">新增</button></div>
+                    <SpecConfigBlock title="专项 1" specData={draftSpec.spec1 || {type:'score'}} onChange={(d) => updateDraft('spec1', d)} />
+                    <SpecConfigBlock title="专项 2" specData={draftSpec.spec2 || {type:'score'}} onChange={(d) => updateDraft('spec2', d)} />
+                </div>
+            );
+        };
 
-            const handleSave = () => {
-                onSave(student.id, { ...scores, rawItem1: rawInputs.item1, rawItem2: rawInputs.item2 });
-                onClose();
+        // --- Document Manager ---
+        const DocumentManager = ({ category, teacherName, onBack }) => {
+            const [docs, setDocs] = useState([]);
+            const [previewDoc, setPreviewDoc] = useState(null);
+            const storageKey = `pe_docs_${teacherName}_${category}`;
+            useEffect(() => { const saved = localStorage.getItem(storageKey); if (saved) setDocs(JSON.parse(saved)); }, [storageKey]);
+            const saveDocs = (newDocs) => { try { localStorage.setItem(storageKey, JSON.stringify(newDocs)); setDocs(newDocs); } catch (e) { alert("存储空间不足。"); } };
+            const handleUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (file.size > 2 * 1024 * 1024) { alert("文件过大！最大 2MB。"); return; }
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const newFile = { id: Date.now(), name: file.name, date: new Date().toLocaleDateString(), size: (file.size / 1024).toFixed(1) + ' KB', type: file.type, data: evt.target.result };
+                    saveDocs([...docs, newFile]);
+                };
+                reader.readAsDataURL(file);
+                e.target.value = '';
+            };
+            const handleDelete = (id) => { if (confirm("确定删除？")) saveDocs(docs.filter(d => d.id !== id)); };
+            const titleMap = { 'syllabus': '教学大纲', 'schedule': '教学进度表', 'plan': '教案' };
+            const handlePreview = (doc) => {
+                const ext = doc.name.split('.').pop().toLowerCase();
+                if (['jpg', 'jpeg', 'png', 'gif', 'pdf'].includes(ext) || doc.type.includes('image') || doc.type.includes('pdf')) { setPreviewDoc({ ...doc, format: 'native' }); } 
+                else if (['xls', 'xlsx'].includes(ext)) { setPreviewDoc({ ...doc, format: 'excel' }); } 
+                else { alert("该格式暂不支持在线预览，请下载后查看。"); }
+            };
+            return (
+                <div className="p-4 bg-white h-full flex flex-col relative">
+                    <div className="flex justify-between items-center mb-4 pb-4 border-b"><h3 className="font-bold text-lg">{titleMap[category]}管理</h3><button onClick={onBack} className="text-gray-500">返回</button></div>
+                    <div className="mb-4 bg-blue-50 p-4 rounded-lg border border-blue-100"><label className="block text-sm font-bold text-blue-800 mb-2">上传新文档</label><input type="file" onChange={handleUpload} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700"/><p className="text-xs text-blue-400 mt-2">* 支持 Word, PDF, Excel, PPT 等 (最大 2MB)</p></div>
+                    <div className="flex-1 overflow-y-auto">
+                        {docs.length === 0 ? <div className="text-center text-gray-400 mt-10">暂无文档</div> : (<div className="space-y-2">{docs.map(doc => (<div key={doc.id} className="flex justify-between items-center p-3 border rounded hover:bg-gray-50"><div onClick={() => handlePreview(doc)} className="flex-1 overflow-hidden mr-4 cursor-pointer"><div className="font-bold truncate text-sm text-blue-600 hover:underline">{doc.name}</div><div className="text-xs text-gray-500">{doc.date} · {doc.size}</div></div><div className="flex gap-2 shrink-0"><a href={doc.data} download={doc.name} className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a><button onClick={() => handleDelete(doc.id)} className="text-red-500 text-xs border px-2 py-1 rounded hover:bg-red-50">删除</button></div></div>))}</div>)}
+                    </div>
+                    {previewDoc && (<div className="fixed inset-0 z-[100] bg-black bg-opacity-75 flex items-center justify-center p-4"><div className="bg-white rounded-lg w-full h-full max-w-4xl max-h-[90vh] flex flex-col relative"><div className="p-2 border-b flex justify-between items-center"><h3 className="font-bold truncate">{previewDoc.name}</h3><button onClick={() => setPreviewDoc(null)} className="text-2xl">&times;</button></div><div className="flex-1 overflow-auto p-2 bg-gray-100 flex items-center justify-center">{previewDoc.format === 'native' ? (<iframe src={previewDoc.data} className="w-full h-full border-none bg-white"></iframe>) : (<ExcelPreview data={previewDoc.data} />)}</div></div></div>)}
+                </div>
+            );
+        };
+        
+        const ExcelPreview = ({ data }) => {
+            const [html, setHtml] = useState('');
+            useEffect(() => {
+                try { const wb = XLSX.read(data.split(',')[1], { type: 'base64' }); const ws = wb.Sheets[wb.SheetNames[0]]; const h = XLSX.utils.sheet_to_html(ws); setHtml(h); } catch(e) { setHtml('<div class="p-4 text-red-500">无法预览此文件</div>'); }
+            }, [data]);
+            return <div className="w-full bg-white p-4 overflow-auto" dangerouslySetInnerHTML={{__html: html}} />;
+        };
+
+        const AttendanceModule = ({ students, onSave, onClose, className, teacherName, semester }) => {
+            const [mode, setMode] = useState('take'); 
+            const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+            const [records, setRecords] = useState({}); 
+
+            useEffect(() => {
+                const initRecs = {};
+                students.forEach(s => {
+                    const todayRec = s.attendance?.find(r => r.date === date);
+                    initRecs[s.id] = todayRec || { status: 'normal', remark: '' };
+                });
+                setRecords(initRecs);
+            }, [date, students]);
+
+            const handleStatusChange = (sid, status) => setRecords(prev => ({ ...prev, [sid]: { ...prev[sid], status } }));
+            const handleRemarkChange = (sid, remark) => setRecords(prev => ({ ...prev, [sid]: { ...prev[sid], remark } }));
+
+            const saveAttendance = () => {
+                const updates = students.map(s => {
+                    const newRec = { date, ...records[s.id] };
+                    const prevAtt = s.attendance || [];
+                    const filtered = prevAtt.filter(r => r.date !== date);
+                    return { id: s.id, attendance: [...filtered, newRec] };
+                });
+                onSave(updates);
+                alert("考勤已保存");
             };
 
-            return (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-4">
-                    <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh] relative z-[101]">
-                        <div className="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-xl">
-                            <div><h3 className="font-bold">{student.name} ({student.id})</h3><p className="text-xs text-gray-500">{student.adminClass}</p></div>
-                            <button onClick={onClose} className="text-2xl">&times;</button>
-                        </div>
-                        <div className="p-6 overflow-y-auto hide-scrollbar space-y-6">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div><label className="text-xs text-gray-500">平时1</label><input type="number" className="w-full border p-2 rounded" value={scores.regular1} onChange={(e) => updateScore('regular1', e.target.value)} /></div>
-                                <div><label className="text-xs text-gray-500">平时2</label><input type="number" className="w-full border p-2 rounded" value={scores.regular2} onChange={(e) => updateScore('regular2', e.target.value)} /></div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div><label className="text-xs text-gray-500">专项1</label><input type="number" className="w-full border p-2 rounded" value={scores.special1} onChange={(e) => updateScore('special1', e.target.value)} /></div>
-                                <div><label className="text-xs text-gray-500">专项2</label><input type="number" className="w-full border p-2 rounded" value={scores.special2} onChange={(e) => updateScore('special2', e.target.value)} /></div>
-                            </div>
-                            
-                            <div className="bg-blue-50 p-4 rounded-lg">
-                                <h4 className="text-sm font-bold text-blue-800 mb-2">统考自动换算</h4>
-                                <div className="space-y-4">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="text-xs text-gray-600 block mb-1">{testNames.item1} (原始)</label>
-                                            <input type="text" placeholder={testNames.item1.includes('跑') ? "如 5.40" : "个数"} className="w-full border border-blue-200 p-2 rounded focus:ring-2 ring-blue-400 outline-none" value={rawInputs.item1} onChange={(e) => handleRawInput('item1', e.target.value, 'stdItem1', testNames.item1)} />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-gray-600 block mb-1">折算分</label>
-                                            <input type="number" className="w-full border p-2 rounded bg-gray-100 text-blue-600 font-bold" value={scores.stdItem1} readOnly />
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="text-xs text-gray-600 block mb-1">{testNames.item2} (原始)</label>
-                                            <input type="text" placeholder={testNames.item2.includes('跑') ? "如 8.6" : "米"} className="w-full border border-blue-200 p-2 rounded focus:ring-2 ring-blue-400 outline-none" value={rawInputs.item2} onChange={(e) => handleRawInput('item2', e.target.value, 'stdItem2', testNames.item2)} />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-gray-600 block mb-1">折算分</label>
-                                            <input type="number" className="w-full border p-2 rounded bg-gray-100 text-blue-600 font-bold" value={scores.stdItem2} readOnly />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+            const exportAttendance = () => {
+                const allDates = new Set();
+                students.forEach(s => (s.attendance || []).forEach(r => allDates.add(r.date)));
+                const sortedDates = Array.from(allDates).sort();
+                const data = students.map((s, i) => {
+                    const row = { '序号': i+1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender };
+                    sortedDates.forEach(d => {
+                        const rec = (s.attendance || []).find(r => r.date === d);
+                        if (!rec || rec.status === 'normal') row[d] = '';
+                        else if (rec.status === 'other') row[d] = rec.remark || '备注';
+                        else row[d] = ATTENDANCE_STATUS[rec.status].symbol;
+                    });
+                    return row;
+                });
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "考勤表");
+                XLSX.writeFile(wb, `${semester}-考勤表-${className}-${teacherName}.xlsx`);
+            };
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div><label className="text-xs text-gray-500">乐跑次数</label><input type="number" className="w-full border p-2 rounded bg-gray-50" value={scores.runCount} onChange={(e) => updateScore('runCount', e.target.value)} /></div>
-                                <div><label className="text-xs text-gray-500">乐跑得分</label><input type="number" className="w-full border p-2 rounded" value={scores.runScore} onChange={(e) => updateScore('runScore', e.target.value)} /></div>
+            if (mode === 'view') {
+                return (
+                    <div className="p-4 bg-white h-full flex flex-col">
+                        <div className="flex justify-between mb-4">
+                            <h3 className="font-bold">考勤记录</h3>
+                            <div className="gap-2 flex">
+                                <button onClick={exportAttendance} className="bg-green-600 text-white px-3 py-1 rounded text-sm">导出Excel</button>
+                                <button onClick={() => setMode('take')} className="text-blue-600 border px-3 py-1 rounded text-sm">返回打卡</button>
                             </div>
-                            {semType === 'spring' && (<div><label className="text-xs text-gray-500">理论</label><input type="number" className="w-full border p-2 rounded" value={scores.theory} onChange={(e) => updateScore('theory', e.target.value)} /></div>)}
                         </div>
-                        <div className="p-4 border-t flex justify-between items-center bg-gray-50 rounded-b-xl">
-                            <span className="font-bold text-lg text-blue-600">总评: {calculateFinalScore(scores, semType)}</span>
-                            <button onClick={handleSave} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">保存</button>
+                        <div className="overflow-auto flex-1 border rounded">
+                            <table className="min-w-full text-xs">
+                                <thead className="bg-gray-50 sticky top-0"><tr><th className="p-2">姓名</th><th className="p-2">异常统计</th></tr></thead>
+                                <tbody>
+                                    {students.map(s => (
+                                        <tr key={s.id} className="border-t">
+                                            <td className="p-2">{s.name}</td>
+                                            <td className="p-2 text-gray-500">{getAttendanceSummary(s.attendance)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-4 bg-white h-full flex flex-col">
+                    <div className="flex justify-between items-center mb-4">
+                        <div className="flex items-center gap-2">
+                            <h3 className="font-bold">考勤打卡</h3>
+                            <input type="date" value={date} onChange={e=>setDate(e.target.value)} className="border rounded p-1 text-sm"/>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => setMode('view')} className="text-blue-600 text-sm">查看/导出</button>
+                            <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
+                        </div>
+                    </div>
+                    <div className="overflow-y-auto flex-1 hide-scrollbar">
+                        {students.map(s => (
+                            <div key={s.id} className="border-b py-2">
+                                <div className="flex justify-between mb-2">
+                                    <span className="font-bold">{s.name}</span>
+                                    <span className="text-gray-400 text-xs">{s.id}</span>
+                                </div>
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                    {Object.entries(ATTENDANCE_STATUS).map(([key, cfg]) => (
+                                        <button key={key} onClick={() => handleStatusChange(s.id, key)} className={`px-2 py-1 rounded border ${records[s.id]?.status === key ? `${cfg.color} border-current bg-blue-50` : 'text-gray-500 border-gray-200'}`}>{cfg.label}</button>
+                                    ))}
+                                </div>
+                                {records[s.id]?.status === 'other' && <input className="mt-2 w-full border rounded p-1 text-xs" placeholder="输入备注..." value={records[s.id]?.remark || ''} onChange={(e) => handleRemarkChange(s.id, e.target.value)} />}
+                            </div>
+                        ))}
+                    </div>
+                    <div className="pt-4 border-t mt-2">
+                        <button onClick={saveAttendance} className="w-full bg-blue-600 text-white py-3 rounded font-bold shadow">保存考勤</button>
                     </div>
                 </div>
             );
         };
 
-        // --- 抽离的批量录入表格组件 ---
-        const BatchEntryTable = ({ students, field, fieldName, semester, onBatchSave }) => {
+        const BatchStdEntryModal = ({ students, trialIndex, itemKey, itemName, onClose, onSave }) => {
+            const [values, setValues] = useState({});
+            useEffect(() => {
+                const init = {};
+                students.forEach(s => { init[s.id] = (s.stdTestRecords?.[itemKey] || [])[trialIndex] || ""; });
+                setValues(init);
+            }, [students, trialIndex, itemKey]);
+            const handleChange = (sid, val) => setValues(prev => ({ ...prev, [sid]: val }));
+            const handleSave = () => {
+                const updates = students.map(s => {
+                    const currentRecords = s.stdTestRecords?.[itemKey] || ["", "", ""];
+                    const newRecords = [...currentRecords];
+                    newRecords[trialIndex] = values[s.id];
+                    return { id: s.id, [itemKey]: newRecords };
+                });
+                onSave(updates, itemKey);
+                onClose();
+            };
+            return (
+                <div className="fixed inset-0 bg-white z-[60] flex flex-col">
+                    <div className="p-4 shadow flex justify-between items-center bg-blue-50">
+                        <div><h3 className="font-bold">批量录入: {itemName}</h3><p className="text-xs text-gray-500">第 {trialIndex + 1} 次测试</p></div>
+                        <button onClick={onClose} className="text-2xl">&times;</button>
+                    </div>
+                    <div className="flex-1 overflow-auto p-4">
+                        <table className="min-w-full text-sm"><thead className="bg-gray-100"><tr><th className="p-2 text-left">姓名</th><th className="p-2 text-left">成绩</th></tr></thead>
+                        <tbody>{students.map(s => (<tr key={s.id} className="border-b"><td className="p-2">{s.name}</td><td className="p-2"><input className="border p-2 rounded w-full" value={values[s.id] || ''} onChange={e => handleChange(s.id, e.target.value)} type="text" inputMode="decimal"/></td></tr>))}</tbody></table>
+                    </div>
+                    <div className="p-4 border-t"><button onClick={handleSave} className="w-full bg-blue-600 text-white py-3 rounded font-bold">确认保存</button></div>
+                </div>
+            );
+        };
+
+        const StdTestModule = ({ students, onSave, onClose, semester, className, teacherName }) => {
             const semType = getSemesterType(semester);
+            const testInfo = getTestItemsName(semType, '男');
+            const [localRecs, setLocalRecs] = useState({});
+            const [batchModalInfo, setBatchModalInfo] = useState(null); 
+
+            useEffect(() => {
+                const init = {};
+                students.forEach(s => { init[s.id] = { item1: s.stdTestRecords?.item1 || ["", "", ""], item2: s.stdTestRecords?.item2 || ["", "", ""] }; });
+                setLocalRecs(init);
+            }, [students]);
+
+            const handleChange = (sid, itemKey, idx, val) => {
+                setLocalRecs(prev => {
+                    const newList = [...prev[sid][itemKey]];
+                    newList[idx] = val;
+                    return { ...prev, [sid]: { ...prev[sid], [itemKey]: newList } };
+                });
+            };
+
+            const handleBatchSave = (updates, itemKey) => {
+                setLocalRecs(prev => {
+                    const next = { ...prev };
+                    updates.forEach(u => {
+                        const sid = u.id;
+                        const newRecords = u[itemKey];
+                        if (next[sid]) next[sid] = { ...next[sid], [itemKey]: newRecords };
+                    });
+                    return next;
+                });
+            };
+
+            const handleSave = () => {
+                const updates = students.map(s => {
+                    const rec = localRecs[s.id];
+                    const info = getTestItemsName(semType, s.gender);
+                    const best1 = getBestRecord(rec.item1, info.type1);
+                    const best2 = getBestRecord(rec.item2, info.type2);
+                    const score1 = calculateStdTestScore(best1, info.item1, s.gender);
+                    const score2 = calculateStdTestScore(best2, info.item2, s.gender);
+                    return { id: s.id, stdTestRecords: rec, scores: { ...s.scores, rawItem1: best1, rawItem2: best2, stdItem1: score1 !== null ? score1 : 0, stdItem2: score2 !== null ? score2 : 0 } };
+                });
+                onSave(updates);
+                alert("记录已保存，最好成绩和分数已同步至总评计算");
+                onClose();
+            };
+
+            const handleExportStd = () => {
+                const data = students.map((s, index) => {
+                    const rec = localRecs[s.id] || { item1:[], item2:[] };
+                    const info = getTestItemsName(semType, s.gender);
+                    const best1 = getBestRecord(rec.item1, info.type1);
+                    const best2 = getBestRecord(rec.item2, info.type2);
+                    return {
+                        '序号': index + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
+                        [`${info.display1}(1)`]: rec.item1[0], [`${info.display1}(2)`]: rec.item1[1], [`${info.display1}(3)`]: rec.item1[2], [`${info.display1}(最好)`]: best1,
+                        [`${info.display2}(1)`]: rec.item2[0], [`${info.display2}(2)`]: rec.item2[1], [`${info.display2}(3)`]: rec.item2[2], [`${info.display2}(最好)`]: best2,
+                    };
+                });
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "统考记录");
+                XLSX.writeFile(wb, `${semester}-统考记录-${className}-${teacherName}.xlsx`);
+            };
+
+            return (
+                <div className="fixed inset-0 bg-white z-[50] flex flex-col">
+                    <div className="p-4 shadow flex justify-between items-center bg-gray-50">
+                        <div><h3 className="font-bold">统考详细记录</h3><p className="text-xs text-gray-500">自动选取最优成绩同步</p></div>
+                        <div className="flex gap-2">
+                            <button onClick={handleExportStd} className="bg-green-600 text-white px-3 py-1 rounded text-sm">导出Excel</button>
+                            <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-auto p-2">
+                        <table className="min-w-full text-xs border-collapse">
+                            <thead>
+                                <tr className="bg-blue-50">
+                                    <th className="border p-2 sticky left-0 bg-blue-50 w-20">姓名</th>
+                                    <th className="border p-2 text-center" colSpan="3">
+                                        <div className="mb-1">{testInfo.display1}</div>
+                                        <div className="flex justify-around">
+                                            {[0,1,2].map(i => (<button key={i} onClick={() => setBatchModalInfo({itemKey:'item1', trialIndex:i, itemName:testInfo.display1})} className="text-blue-600 hover:underline">第{i+1}次</button>))}
+                                        </div>
+                                    </th>
+                                    <th className="border p-2 text-center" colSpan="3">
+                                        <div className="mb-1">{testInfo.display2}</div>
+                                        <div className="flex justify-around">
+                                            {[0,1,2].map(i => (<button key={i} onClick={() => setBatchModalInfo({itemKey:'item2', trialIndex:i, itemName:testInfo.display2})} className="text-blue-600 hover:underline">第{i+1}次</button>))}
+                                        </div>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {students.map(s => (
+                                    <tr key={s.id}>
+                                        <td className="border p-2 font-bold sticky left-0 bg-white">{s.name}</td>
+                                        {[0,1,2].map(i => (<td key={`i1-${i}`} className="border p-1"><input className="w-full text-center p-1" value={localRecs[s.id]?.item1[i] || ''} onChange={e=>handleChange(s.id, 'item1', i, e.target.value)} /></td>))}
+                                        {[0,1,2].map(i => (<td key={`i2-${i}`} className="border p-1"><input className="w-full text-center p-1" value={localRecs[s.id]?.item2[i] || ''} onChange={e=>handleChange(s.id, 'item2', i, e.target.value)} /></td>))}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="p-4 border-t"><button onClick={handleSave} className="w-full bg-blue-600 text-white py-3 rounded font-bold">保存并同步</button></div>
+                    {batchModalInfo && <BatchStdEntryModal students={students} {...batchModalInfo} onClose={() => setBatchModalInfo(null)} onSave={handleBatchSave}/>}
+                </div>
+            );
+        };
+
+        const BatchEntryTable = ({ students, field, fieldName, semester, config, onBatchSave }) => {
             return (
                 <div className="overflow-x-auto bg-white rounded-lg shadow border border-gray-200">
                     <table className="min-w-full divide-y divide-gray-200">
@@ -363,14 +627,13 @@
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    {/* 动态显示列头 */}
-                                    {(field === 'stdItem1' || field === 'stdItem2') ? `${fieldName} (原始成绩 -> 折算分)` : `${fieldName} (输入后自动保存)`}
+                                    {(field === 'stdItem1' || field === 'stdItem2' || field === 'special1' || field === 'special2') ? `${fieldName} (原始成绩 -> 折算分)` : `${fieldName} (输入后自动保存)`}
                                 </th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {students.map(s => (
-                                <BatchRow key={s.id} student={s} field={field} semester={semester} onSave={onBatchSave} />
+                                <BatchRow key={s.id} student={s} field={field} semester={semester} config={config} onSave={onBatchSave} />
                             ))}
                         </tbody>
                     </table>
@@ -378,109 +641,229 @@
             );
         };
 
-        // 单独的行组件 - 升级为支持统考自动换算
-        const BatchRow = React.memo(({ student, field, semester, onSave }) => {
-            // 判断是否是统考项目
+        const BatchRow = React.memo(({ student, field, semester, config, onSave }) => {
             const isStdItem = field === 'stdItem1' || field === 'stdItem2';
+            const isSpecItem = field === 'special1' || field === 'special2';
+            let rawKey = null;
+            let actualBindKey = field;
+            let needsCalc = false;
             
-            // 确定绑定的 Key: 统考绑定 rawItem1/2，普通绑定 field
-            const rawKey = field === 'stdItem1' ? 'rawItem1' : (field === 'stdItem2' ? 'rawItem2' : null);
-            const actualBindKey = isStdItem ? rawKey : field;
-            
-            const [val, setVal] = useState(student.scores[actualBindKey]);
+            if (isStdItem) {
+                rawKey = field === 'stdItem1' ? 'rawItem1' : 'rawItem2';
+                actualBindKey = rawKey;
+                needsCalc = true;
+            } else if (isSpecItem) {
+                const specConf = field === 'special1' ? config?.spec1 : config?.spec2;
+                if (specConf && specConf.type !== 'score') {
+                    rawKey = field === 'special1' ? 'rawSpec1' : 'rawSpec2';
+                    actualBindKey = rawKey;
+                    needsCalc = true;
+                }
+            }
 
-            // 当切换列或数据源更新时，重置本地状态
-            useEffect(() => {
-                setVal(student.scores[actualBindKey]);
-            }, [actualBindKey, student.scores]);
+            const [val, setVal] = useState(student.scores[actualBindKey]);
+            useEffect(() => { setVal(student.scores[actualBindKey]); }, [actualBindKey, student.scores]);
 
             const handleChange = (e) => {
                 const newValue = e.target.value;
                 setVal(newValue);
-                
                 if (isStdItem) {
-                    // 如果是统考，需要计算分数并更新两个字段 (原始值 + 分数)
                     const semType = getSemesterType(semester);
                     const testNames = getTestItemsName(semType, student.gender);
                     const itemName = field === 'stdItem1' ? testNames.item1 : testNames.item2;
-                    
-                    const calcScore = calculateStandardScore(newValue, itemName, student.gender);
-                    
-                    // 保存：同时更新 原始值(rawKey) 和 分数(field)
-                    onSave(student.id, { 
-                        [rawKey]: newValue,
-                        [field]: calcScore !== null ? calcScore : 0
-                    });
+                    const calcScore = calculateStdTestScore(newValue, itemName, student.gender);
+                    onSave(student.id, { [rawKey]: newValue, [field]: calcScore !== null ? calcScore : 0 });
+                } else if (isSpecItem && needsCalc) {
+                    const specConf = field === 'special1' ? config.spec1 : config.spec2;
+                    const calcScore = calculateSpecialtyScore(newValue, student.gender, specConf);
+                    onSave(student.id, { [rawKey]: newValue, [field]: calcScore !== null ? calcScore : 0 });
                 } else {
-                    // 普通项目，只更新当前字段
                     onSave(student.id, { [field]: newValue });
                 }
             };
+            
+            let displayScore = 0;
+            if (needsCalc) {
+                if (isStdItem) {
+                    const semType = getSemesterType(semester);
+                    const testNames = getTestItemsName(semType, student.gender);
+                    const itemName = field === 'stdItem1' ? testNames.item1 : testNames.item2;
+                    displayScore = calculateStdTestScore(val, itemName, student.gender);
+                } else if (isSpecItem) {
+                     const specConf = field === 'special1' ? config?.spec1 : config?.spec2;
+                     displayScore = calculateSpecialtyScore(val, student.gender, specConf);
+                }
+            }
 
             return (
                 <tr>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{student.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.id}</td>
                     <td className="px-6 py-4 whitespace-nowrap flex items-center gap-2">
-                        <input 
-                            type={isStdItem ? "text" : "number"}
-                            placeholder={isStdItem ? "原始成绩" : ""}
-                            className="input-cell w-32 border border-gray-300 rounded px-2 py-1"
-                            value={val || ''}
-                            onChange={handleChange}
-                        />
-                        {/* 如果是统考项目，显示折算分 */}
-                        {isStdItem && (
-                            <span className="text-sm font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                                {student.scores[field] || 0}分
-                            </span>
-                        )}
+                        <input type={needsCalc ? "text" : "number"} placeholder={needsCalc ? "原始成绩" : ""} className="input-cell w-32 border border-gray-300 rounded px-2 py-1" value={val || ''} onChange={handleChange} />
+                        {needsCalc && <span className="text-sm font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">{displayScore || 0}分</span>}
                     </td>
                 </tr>
             );
         });
 
-        // 管理员修改弹窗
-        const AdminEditModal = ({ student, onClose, onSave }) => {
-            const [optionClass, setOptionClass] = useState(student.optionClass);
-            const [teacherName, setTeacherName] = useState(student.teacherName);
+        const GradingModal = ({ student, semester, onClose, onSave, specialtyConfig, sportsList }) => {
+            const [scores, setScores] = useState({ ...student.scores });
+            const [focusedField, setFocusedField] = useState(null); 
+            const matchedSport = useMemo(() => sportsList.find(s => student.optionClass?.includes(s)) || sportsList[0], [student.optionClass, sportsList]);
+            const [sport, setSport] = useState(matchedSport);
+            const config = specialtyConfig[sport] || { spec1: {type:'score'}, spec2: {type:'score'} };
+            const [specInputs, setSpecInputs] = useState({ rawSpec1: student.scores.rawSpec1 || '', rawSpec2: student.scores.rawSpec2 || '' });
+            const semType = getSemesterType(semester);
+            const testNames = getTestItemsName(semType, student.gender);
+            const attendanceHint = getAttendanceSummary(student.attendance);
+
+            // Auto-save logic
+            useEffect(() => {
+                const timer = setTimeout(() => {
+                    onSave(student.id, { ...scores, rawSpec1: specInputs.rawSpec1, rawSpec2: specInputs.rawSpec2 });
+                }, 500); // Debounce save
+                return () => clearTimeout(timer);
+            }, [scores, specInputs, onSave, student.id]);
+
+            const updateScore = (field, value) => setScores(prev => ({ ...prev, [field]: value }));
+            const handleSpecInput = (specKey, val) => {
+                setSpecInputs(prev => ({ ...prev, [specKey]: val }));
+                const specConf = specKey === 'rawSpec1' ? config.spec1 : config.spec2;
+                const scoreField = specKey === 'rawSpec1' ? 'special1' : 'special2';
+                const score = calculateSpecialtyScore(val, student.gender, specConf);
+                updateScore(scoreField, score);
+            };
+            const handleClose = () => { 
+                onClose(); 
+            };
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-4">
-                    <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6 relative z-[101]">
-                        <h3 className="text-lg font-bold mb-4">修改学生信息</h3>
-                        <div className="mb-4 text-sm text-gray-600">
-                            <p>姓名: <span className="font-bold text-gray-800">{student.name}</span></p>
-                            <p>学号: <span className="font-bold text-gray-800">{student.id}</span></p>
-                            <p>行政班级: {student.adminClass}</p>
+                    <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh] relative z-[101]">
+                        <div className="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-xl">
+                            <div><h3 className="font-bold">{student.name}</h3><p className="text-xs text-gray-500">{student.id} | {student.gender} | {student.optionClass}</p></div>
+                            <button onClick={handleClose} className="text-2xl ml-2">&times;</button>
                         </div>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">体育课选项班</label>
-                                <input className="w-full border p-2 rounded focus:ring-2 ring-blue-500 outline-none" value={optionClass} onChange={e => setOptionClass(e.target.value)} />
+                        <div className="p-6 overflow-y-auto hide-scrollbar space-y-6">
+                            <div className="bg-orange-50 p-4 rounded border border-orange-100">
+                                <div className="flex justify-between mb-2 items-center">
+                                    <h4 className="font-bold text-orange-800 text-sm">专项考核 ({sport})</h4>
+                                    <select className="text-xs border p-1 rounded" value={sport} onChange={e=>setSport(e.target.value)}>{sportsList.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-xs text-gray-600 block mb-1">专项1 ({config.spec1?.type === 'score' ? '分值' : config.spec1?.type})</label>
+                                        <input type="number" placeholder={config.spec1?.type === 'score' ? '0-100' : '原始数据'} className="w-full border p-2 rounded focus:ring-2 ring-orange-300" value={config.spec1?.type === 'score' ? scores.special1 : specInputs.rawSpec1} onChange={e => { if(config.spec1?.type === 'score') updateScore('special1', e.target.value); else handleSpecInput('rawSpec1', e.target.value); }} />
+                                        {config.spec1?.type !== 'score' && <div className="text-xs text-right text-orange-600 mt-1">折算: {scores.special1}分</div>}
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-600 block mb-1">专项2 ({config.spec2?.type === 'score' ? '分值' : config.spec2?.type})</label>
+                                        <input type="number" placeholder={config.spec2?.type === 'score' ? '0-100' : '原始数据'} className="w-full border p-2 rounded focus:ring-2 ring-orange-300" value={config.spec2?.type === 'score' ? scores.special2 : specInputs.rawSpec2} onChange={e => { if(config.spec2?.type === 'score') updateScore('special2', e.target.value); else handleSpecInput('rawSpec2', e.target.value); }} />
+                                        {config.spec2?.type !== 'score' && <div className="text-xs text-right text-orange-600 mt-1">折算: {scores.special2}分</div>}
+                                    </div>
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">体育课任课教师</label>
-                                <input className="w-full border p-2 rounded focus:ring-2 ring-blue-500 outline-none" value={teacherName} onChange={e => setTeacherName(e.target.value)} />
+                            <div className="bg-blue-50 p-4 rounded text-xs text-blue-800">
+                                <h4 className="font-bold mb-2">统考成绩 (请在"统考记录"模块录入)</h4>
+                                <div className="flex justify-between">
+                                    <span>{testNames.display1}: <strong>{scores.rawItem1 || '-'}</strong> -> <strong>{calculateStdTestScore(scores.rawItem1, testNames.item1, student.gender)}分</strong></span>
+                                    <span>{testNames.display2}: <strong>{scores.rawItem2 || '-'}</strong> -> <strong>{calculateStdTestScore(scores.rawItem2, testNames.item2, student.gender)}分</strong></span>
+                                </div>
                             </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="relative">
+                                    <label className="text-xs text-gray-500">平时1</label>
+                                    <input 
+                                        type="number" className="w-full border p-2 rounded" 
+                                        value={scores.regular1} onChange={(e) => updateScore('regular1', e.target.value)} 
+                                        onFocus={() => setFocusedField('regular1')} onBlur={() => setFocusedField(null)}
+                                    />
+                                    {focusedField === 'regular1' && attendanceHint !== "无考勤记录" && (
+                                        <div className={`absolute left-0 bottom-full mb-1 text-xs p-2 rounded shadow-lg z-50 whitespace-nowrap ${attendanceHint.includes('无异常') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                            {attendanceHint}
+                                        </div>
+                                    )}
+                                </div>
+                                <div><label className="text-xs text-gray-500">平时2</label><input type="number" className="w-full border p-2 rounded" value={scores.regular2} onChange={(e) => updateScore('regular2', e.target.value)} /></div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div><label className="text-xs text-gray-500">乐跑次数</label><input type="number" className="w-full border p-2 rounded bg-gray-50" value={scores.runCount} onChange={(e) => updateScore('runCount', e.target.value)} /></div>
+                                <div><label className="text-xs text-gray-500">乐跑得分</label><input type="number" className="w-full border p-2 rounded" value={scores.runScore} onChange={(e) => updateScore('runScore', e.target.value)} /></div>
+                            </div>
+                            {semType === 'spring' && (<div><label className="text-xs text-gray-500">理论</label><input type="number" className="w-full border p-2 rounded" value={scores.theory} onChange={(e) => updateScore('theory', e.target.value)} /></div>)}
                         </div>
-                        <div className="mt-6 flex justify-end gap-2">
-                            <button onClick={onClose} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">取消</button>
-                            <button onClick={() => onSave(student.id, optionClass, teacherName)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>
+                        <div className="p-4 border-t flex justify-between items-center bg-gray-50 rounded-b-xl">
+                            <span className="font-bold text-lg text-blue-600">总评: {calculateFinalScore({ ...scores, stdItem1: calculateStdTestScore(scores.rawItem1, testNames.item1, student.gender), stdItem2: calculateStdTestScore(scores.rawItem2, testNames.item2, student.gender) }, semType)}</span>
+                            <button onClick={handleClose} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">关闭 (自动保存)</button>
                         </div>
                     </div>
                 </div>
             );
         };
 
-        // 管理员面板
-        const AdminPanel = ({ students, setStudents, teachers, setTeachers, semester, setSemester, onLogout }) => {
+        const AdminEditModal = ({ student, onClose, onSave, mode = 'full' }) => {
+            const [form, setForm] = useState({ ...student, ...student.scores });
+            const handleSave = () => {
+                let updates = {};
+                if (mode === 'full') { updates = { optionClass: form.optionClass, teacherName: form.teacherName }; } 
+                else if (mode === 'run') { updates = { scores: { ...student.scores, runCount: form.runCount, runScore: form.runScore, isRunFailed: form.isRunFailed } }; } 
+                else if (mode === 'theory') { updates = { scores: { ...student.scores, theory: form.theory } }; }
+                onSave(student.id, updates);
+            };
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-4">
+                    <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6 relative z-[101]">
+                        <h3 className="text-lg font-bold mb-4">修改信息 ({student.name})</h3>
+                        <div className="space-y-4">
+                            {mode === 'full' && (<><div><label className="text-xs">选项班</label><input className="w-full border p-2 rounded" value={form.optionClass} onChange={e => setForm({...form, optionClass: e.target.value})} /></div><div><label className="text-xs">任课教师</label><input className="w-full border p-2 rounded" value={form.teacherName} onChange={e => setForm({...form, teacherName: e.target.value})} /></div></>)}
+                            {mode === 'run' && (<><div><label className="text-xs">乐跑次数</label><input type="number" className="w-full border p-2 rounded" value={form.runCount} onChange={e => setForm({...form, runCount: e.target.value})} /></div><div><label className="text-xs">乐跑成绩</label><input type="number" className="w-full border p-2 rounded" value={form.runScore} onChange={e => setForm({...form, runScore: e.target.value})} /></div><div className="flex items-center gap-2"><input type="checkbox" checked={form.isRunFailed} onChange={e => setForm({...form, isRunFailed: e.target.checked})} /><label className="text-xs">不合格标记</label></div></>)}
+                            {mode === 'theory' && (<div><label className="text-xs">理论成绩</label><input type="number" className="w-full border p-2 rounded" value={form.theory} onChange={e => setForm({...form, theory: e.target.value})} /></div>)}
+                        </div>
+                        <div className="mt-6 flex justify-end gap-2"><button onClick={onClose} className="px-4 py-2 text-gray-600">取消</button><button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded">保存</button></div>
+                    </div>
+                </div>
+            );
+        };
+        
+        const AdminTable = ({ students, columns, onDelete, onEdit }) => {
+            return (
+                 <div className="flex-1 overflow-auto border rounded relative">
+                    <table className="min-w-full text-xs divide-y">
+                        <thead className="bg-gray-50 sticky top-0 z-10">
+                            <tr>{columns.map(col => <th key={col.key} className="p-2 text-left">{col.label}</th>)}<th className="p-2 text-center">操作</th></tr>
+                        </thead>
+                        <tbody className="divide-y bg-white">
+                            {students.map(s => (<tr key={s.id}>{columns.map(col => <td key={col.key} className="p-2">{col.render ? col.render(s) : s[col.key]}</td>)}<td className="p-2 text-center flex justify-center gap-2"><button onClick={() => onEdit(s)} className="text-blue-600">编辑</button><button onClick={() => onDelete(s.id)} className="text-red-500">删除</button></td></tr>))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        const AdminPanel = ({ students, setStudents, teachers, setTeachers, semester, setSemester, onLogout, sportsList, setSportsList, config, setConfig }) => {
             const [activeTab, setActiveTab] = useState('data');
             const [searchTerm, setSearchTerm] = useState('');
             const [currentPage, setCurrentPage] = useState(1);
             const [adminEditingStudent, setAdminEditingStudent] = useState(null);
+            const [jumpPage, setJumpPage] = useState('');
             const itemsPerPage = 20;
             const semesterOptions = getSemesterOptions();
+
+            const semesterStudents = useMemo(() => students.filter(s => s.semester === semester), [students, semester]);
+            const filteredStudents = useMemo(() => {
+                if (!searchTerm) return semesterStudents;
+                const lower = searchTerm.toLowerCase();
+                return semesterStudents.filter(s => s.id.includes(lower) || s.name.includes(lower));
+            }, [semesterStudents, searchTerm]);
+
+            const [currentPageState, setCurrentPageState] = useState(1);
+            useEffect(() => setCurrentPageState(1), [searchTerm, activeTab]);
+            const paginatedData = useMemo(() => {
+                const start = (currentPageState - 1) * itemsPerPage;
+                return filteredStudents.slice(start, start + itemsPerPage);
+            }, [filteredStudents, currentPageState]);
+            const totalPages = Math.ceil(filteredStudents.length / itemsPerPage);
 
             const handleFileUpload = (e, type) => {
                 const file = e.target.files?.[0];
@@ -492,25 +875,17 @@
                     const wsname = wb.SheetNames[0];
                     const ws = wb.Sheets[wsname];
                     const data = XLSX.utils.sheet_to_json(ws);
+                    if (data.length === 0) { alert("表格为空"); return; }
                     
-                    if (data.length === 0) {
-                        alert("表格为空，请检查");
-                        return;
+                    if (type === 'students') {
+                        processStudentData(data);
+                    } else if (type === 'run') {
+                        processRunData(data);
+                    } else if (type === 'teachers') {
+                        processTeacherData(data);
+                    } else if (type === 'theory') {
+                        processTheoryData(data);
                     }
-
-                    const firstRow = data[0];
-                    const requiredCols = type === 'students' ? ['学号', '姓名'] : type === 'run' ? ['学号'] : ['姓名', '工号'];
-                    const missing = requiredCols.filter(col => !Object.keys(firstRow).includes(col));
-                    
-                    if (missing.length > 0) {
-                        alert(`导入失败：表格缺少以下必要列：${missing.join(', ')}`);
-                        e.target.value = ''; 
-                        return;
-                    }
-
-                    if (type === 'students') processStudentData(data);
-                    else if (type === 'run') processRunData(data);
-                    else if (type === 'teachers') processTeacherData(data);
                     e.target.value = '';
                 };
                 reader.readAsBinaryString(file);
@@ -518,268 +893,271 @@
 
             const processStudentData = (data) => {
                 const newStudents = data.map(row => ({
-                    id: String(row['学号'] || row['id']),
+                    id: String(row['学号'] || row['id']).trim(),
                     name: row['姓名'],
                     gender: row['性别'],
                     adminClass: row['行政班级'],
                     optionClass: row['体育课选项班'] || row['上课班级'] || '未分配班级',
                     teacherName: row['体育课任课教师'] || '',
-                    teacherId: '', 
-                    scores: { regular1:0, regular2:0, special1:0, special2:0, runCount:0, runScore:0, stdItem1:0, stdItem2:0, theory:0 }
+                    semester: semester, 
+                    scores: { regular1:0, regular2:0, special1:0, special2:0, runCount:0, runScore:0, stdItem1:0, stdItem2:0, theory:'' } 
                 }));
-                const merged = [...students];
-                let addedCount = 0;
-                newStudents.forEach(ns => {
-                    const idx = merged.findIndex(s => s.id === ns.id);
-                    if (idx >= 0) { 
-                        merged[idx] = { ...merged[idx], ...ns, scores: merged[idx].scores }; 
-                    } else { 
-                        merged.push(ns); 
-                        addedCount++;
-                    }
+                setStudents(prev => {
+                    const others = prev.filter(s => s.semester !== semester);
+                    const current = prev.filter(s => s.semester === semester);
+                    newStudents.forEach(ns => {
+                         const idx = current.findIndex(s => s.id === ns.id);
+                         if (idx >= 0) current[idx] = { ...current[idx], ...ns, scores: current[idx].scores };
+                         else current.push(ns);
+                    });
+                    return [...others, ...current];
                 });
-                setStudents(merged);
-                alert(`处理完成：新增 ${addedCount} 人，更新 ${newStudents.length - addedCount} 人`);
+                alert("导入完成");
             };
 
             const processRunData = (data) => {
-                let count = 0;
-                const updatedStudents = students.map(s => {
-                    const record = data.find(r => String(r['学号']) === s.id);
-                    if (record) {
-                        count++;
-                        return { ...s, scores: { ...s.scores, runCount: record['乐跑总次数'] || 0, runScore: record['达成度评价表录入百分制成绩'] || 0 } };
-                    }
-                    return s;
-                });
-                setStudents(updatedStudents);
-                alert(`成功匹配并更新 ${count} 名学生的乐跑成绩`);
-            };
-
-            const processTeacherData = (data) => {
-                const newTeachers = data.map(r => ({ name: r['姓名'], id: String(r['工号']) }));
-                setTeachers(newTeachers);
-                alert(`导入 ${newTeachers.length} 位教师名单`);
-            };
-
-            // 过滤逻辑
-            const filteredStudents = useMemo(() => {
-                if (!searchTerm) return students;
-                const lower = searchTerm.toLowerCase();
-                return students.filter(s =>
-                    s.id.toLowerCase().includes(lower) ||
-                    s.name.toLowerCase().includes(lower) ||
-                    (s.teacherName && s.teacherName.toLowerCase().includes(lower)) ||
-                    (s.optionClass && s.optionClass.toLowerCase().includes(lower)) ||
-                    (s.adminClass && s.adminClass.toLowerCase().includes(lower))
-                );
-            }, [students, searchTerm]);
-
-            // 分页逻辑
-            useEffect(() => setCurrentPage(1), [searchTerm]);
-            const totalPages = Math.ceil(filteredStudents.length / itemsPerPage);
-            const paginatedStudents = useMemo(() => {
-                const start = (currentPage - 1) * itemsPerPage;
-                return filteredStudents.slice(start, start + itemsPerPage);
-            }, [filteredStudents, currentPage]);
-
-            // 保存修改
-            const handleAdminSave = (id, newOptionClass, newTeacherName) => {
                 setStudents(prev => prev.map(s => {
-                    if (s.id === id) {
-                        return { ...s, optionClass: newOptionClass, teacherName: newTeacherName };
+                    if (s.semester !== semester) return s;
+                    const record = data.find(r => String(r['学号']||'').trim() === s.id);
+                    if (record) {
+                        const val = record['达成度评价表录入百分制成绩'];
+                        const isFail = String(val).trim() === '不合格';
+                        return { ...s, scores: { ...s.scores, runCount: record['乐跑总次数']||0, runScore: isFail ? 0 : (parseFloat(val)||0), isRunFailed: isFail } };
                     }
                     return s;
                 }));
-                setAdminEditingStudent(null);
+                alert("乐跑数据导入完成");
             };
 
+            const processTheoryData = (data) => {
+                setStudents(prev => prev.map(s => {
+                    if (s.semester !== semester) return s;
+                    const studentId = String(s.id).trim();
+                    const record = data.find(r => {
+                        const rowId = String(r['学号'] || r['id'] || r['ID'] || '').trim();
+                        return rowId === studentId;
+                    });
+                    
+                    if (record) {
+                        let val = '';
+                        if (record['得分'] !== undefined) val = record['得分'];
+                        else if (record['理论成绩'] !== undefined) val = record['理论成绩'];
+                        else if (record['理论'] !== undefined) val = record['理论'];
+                        
+                        return { ...s, scores: { ...s.scores, theory: val === '' ? '' : parseFloat(val) } };
+                    }
+                    return s;
+                }));
+                alert("理论成绩导入完成");
+            };
+            
+            const processTeacherData = (data) => {
+                const newTeachers = data.map(r => ({ name: r['姓名'], id: String(r['工号']) }));
+                setTeachers(newTeachers);
+                alert("教师导入完成");
+            };
+
+            const handleDeleteRow = (studentId) => {
+                if (activeTab === 'data') {
+                    if(confirm("确定删除该学生及其所有成绩吗？")) {
+                         setStudents(prev => prev.filter(s => !(s.id === studentId && s.semester === semester)));
+                    }
+                } else if (activeTab === 'run') {
+                    if(confirm("确定清除该学生的乐跑成绩吗？")) {
+                         setStudents(prev => prev.map(s => {
+                             if (s.id === studentId && s.semester === semester) {
+                                 return { ...s, scores: { ...s.scores, runCount: 0, runScore: 0, isRunFailed: false } };
+                             }
+                             return s;
+                         }));
+                    }
+                } else if (activeTab === 'theory') {
+                     if(confirm("确定清除该学生的理论成绩吗？")) {
+                         setStudents(prev => prev.map(s => {
+                             if (s.id === studentId && s.semester === semester) {
+                                 return { ...s, scores: { ...s.scores, theory: '' } };
+                             }
+                             return s;
+                         }));
+                    }
+                }
+            };
+
+            const handleClearAllStudents = () => {
+                if(!confirm(`⚠️ 高危操作：确定清空【${semester}】的所有学生数据吗？\n此操作将删除该学期下的学生名单、所有成绩、考勤记录。\n且无法恢复！`)) return;
+                setStudents(prev => prev.filter(s => s.semester !== semester));
+                alert("本学期学生数据已清空");
+            };
+
+            const handleClearCategory = (category) => {
+                const catName = category === 'run' ? '乐跑' : '理论';
+                if (!confirm(`确定清空本学期所有学生的 ${catName} 数据吗？此操作不可撤销！`)) return;
+                setStudents(prev => prev.map(s => {
+                    if (s.semester !== semester) return s;
+                    const newScores = { ...s.scores };
+                    if (category === 'run') { newScores.runCount = 0; newScores.runScore = 0; newScores.isRunFailed = false; }
+                    if (category === 'theory') { newScores.theory = ''; }
+                    return { ...s, scores: newScores };
+                }));
+                alert(`${catName}数据已清空`);
+            };
+
+            const handleSaveEdit = (id, updates) => {
+                setStudents(prev => prev.map(s => {
+                    if (s.id === id && s.semester === semester) {
+                         if (updates.scores) return { ...s, scores: { ...s.scores, ...updates.scores } };
+                         return { ...s, ...updates };
+                    }
+                    return s;
+                }));
+                setEditModal(null);
+            };
+
+            const handleJump = () => { const page = parseInt(jumpPage); if (page >= 1 && page <= totalPages) { setCurrentPageState(page); setJumpPage(''); } else { alert(`请输入 1 到 ${totalPages} 之间的页码`); } };
+
             return (
-                <div className="min-h-screen bg-gray-50">
-                    <header className="bg-white shadow">
-                        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-                            <h1 className="text-xl font-bold text-gray-800">管理员控制台</h1>
-                            <div className="flex items-center gap-4">
-                                <span className="text-sm text-gray-500">设置学期:</span>
-                                <select value={semester} onChange={(e) => setSemester(e.target.value)} className="border rounded px-2 py-1 text-sm bg-white">
-                                    {semesterOptions.map(opt => (<option key={opt} value={opt}>{opt} ({opt.endsWith('1') ? '秋季' : '春季'})</option>))}
-                                </select>
-                                <button onClick={onLogout} className="text-red-600 text-sm hover:underline">退出</button>
-                            </div>
-                        </div>
+                <div className="min-h-screen bg-gray-50 flex flex-col">
+                    <header className="bg-white shadow p-4 flex justify-between items-center">
+                        <div className="flex items-center gap-4"><h1 className="font-bold">管理员后台</h1><div className="flex items-center gap-2"><span className="text-xs text-gray-500">学期:</span><select value={semester} onChange={(e) => setSemester(e.target.value)} className="border rounded px-1 text-xs">{semesterOptions.map(opt => (<option key={opt} value={opt}>{opt}</option>))}</select></div></div>
+                        <button onClick={onLogout} className="text-red-500 text-sm">退出</button>
                     </header>
-                    <main className="max-w-7xl mx-auto px-4 py-6">
-                        <div className="flex space-x-4 mb-6 overflow-x-auto">
-                            {['data', 'teachers', 'run'].map(tab => (
-                                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap ${activeTab === tab ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>
-                                    {tab === 'data' && '学生基础数据'} {tab === 'teachers' && '教师管理'} {tab === 'run' && '乐跑成绩导入'}
-                                </button>
-                            ))}
-                        </div>
-                        <div className="bg-white rounded-xl shadow p-6">
-                            {activeTab === 'data' && (
-                                <div className="space-y-6">
-                                    <div className="border-b pb-4">
-                                        <h3 className="font-semibold mb-2">步骤1: 导入学生名单</h3>
-                                        <input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileUpload(e, 'students')} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                    <div className="flex-1 p-4 overflow-hidden flex flex-col">
+                        <div className="flex space-x-2 mb-4 overflow-x-auto">{['data', 'standards', 'teachers', 'run', 'theory'].map(t => (<button key={t} onClick={()=>setActiveTab(t)} className={`px-3 py-1 rounded whitespace-nowrap ${activeTab===t?'bg-blue-600 text-white':'bg-white text-sm'}`}>{t==='data'?'学生数据':t==='standards'?'专项标准':t==='teachers'?'教师管理':t==='theory'?'理论导入':'乐跑导入'}</button>))}</div>
+                        
+                        <div className="flex-1 overflow-hidden h-full flex flex-col bg-white p-4 rounded shadow">
+                            {activeTab === 'standards' && <AdminStandardsPanel sportsList={sportsList} setSportsList={setSportsList} config={config} setConfig={setConfig} />}
+                            {activeTab === 'teachers' && (
+                                <div className="space-y-4 h-full overflow-auto">
+                                    <div className="border-b pb-4"><h3 className="font-semibold mb-2">导入教师</h3><input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileUpload(e, 'teachers')} className="text-sm"/></div>
+                                    <div className="grid grid-cols-2 gap-2">{teachers.map(t => (<div key={t.id} className="border p-2 rounded text-sm flex justify-between"><span>{t.name}</span><span className="bg-gray-100 px-1 rounded">{t.id}</span></div>))}</div>
+                                </div>
+                            )}
+                            
+                            {(activeTab === 'data' || activeTab === 'run' || activeTab === 'theory') && (
+                                <div className="flex flex-col h-full">
+                                    <div className="flex justify-between items-center mb-4 gap-2 flex-wrap border-b pb-2">
+                                        <div className="flex gap-2 items-center">
+                                            <input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileUpload(e, activeTab === 'data' ? 'students' : activeTab)} className="text-xs w-48"/>
+                                            <input type="text" placeholder="搜索..." className="border rounded px-2 py-1 text-xs" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            {activeTab === 'data' && <button onClick={handleClearAllStudents} className="bg-red-600 text-white px-3 py-1 rounded text-xs">清空本学期学生数据</button>}
+                                            {activeTab === 'run' && <button onClick={() => handleClearCategory('run')} className="bg-red-500 text-white px-3 py-1 rounded text-xs">清空本学期乐跑</button>}
+                                            {activeTab === 'theory' && <button onClick={() => handleClearCategory('theory')} className="bg-red-500 text-white px-3 py-1 rounded text-xs">清空本学期理论</button>}
+                                        </div>
                                     </div>
                                     
-                                    {/* 搜索框 */}
-                                    <div className="flex gap-2">
-                                        <input 
-                                            type="text" 
-                                            placeholder="搜索姓名、学号、班级或教师..." 
-                                            className="border border-gray-300 rounded px-3 py-2 text-sm w-full md:w-80"
-                                            value={searchTerm}
-                                            onChange={e => setSearchTerm(e.target.value)}
-                                        />
-                                    </div>
-
-                                    {/* 学生表格 */}
-                                    <div className="max-h-[60vh] overflow-y-auto border rounded text-sm relative">
-                                        <table className="min-w-full divide-y divide-gray-200">
-                                            <thead className="bg-gray-50 sticky top-0 z-10">
-                                                <tr>
-                                                    <th className="px-4 py-2 text-left">学号</th>
-                                                    <th className="px-4 py-2 text-left">姓名</th>
-                                                    <th className="px-4 py-2 text-left">选项班</th>
-                                                    <th className="px-4 py-2 text-left">任课教师</th>
-                                                    <th className="px-4 py-2 text-center">操作</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="bg-white divide-y divide-gray-200">
-                                                {paginatedStudents.length > 0 ? paginatedStudents.map(s => (
-                                                    <tr key={s.id}>
-                                                        <td className="px-4 py-2">{s.id}</td>
-                                                        <td className="px-4 py-2">{s.name}</td>
-                                                        <td className="px-4 py-2">{s.optionClass}</td>
-                                                        <td className="px-4 py-2 text-gray-500">{s.teacherName || '未分配'}</td>
-                                                        <td className="px-4 py-2 text-center">
-                                                            <button 
-                                                                onClick={() => setAdminEditingStudent(s)}
-                                                                className="text-blue-600 hover:underline text-xs"
-                                                            >
-                                                                编辑
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                )) : (
-                                                    <tr>
-                                                        <td colSpan="5" className="px-4 py-8 text-center text-gray-400">
-                                                            暂无数据，请先导入Excel或尝试更换搜索词
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    {/* 分页控制 */}
-                                    {totalPages > 1 && (
-                                        <div className="flex justify-between items-center pt-2">
-                                            <span className="text-xs text-gray-500">共 {filteredStudents.length} 条数据，第 {currentPage} / {totalPages} 页</span>
-                                            <div className="flex gap-2">
-                                                <button 
-                                                    disabled={currentPage === 1}
-                                                    onClick={() => setCurrentPage(p => p - 1)}
-                                                    className="px-3 py-1 border rounded text-xs disabled:opacity-50 hover:bg-gray-50"
-                                                >
-                                                    上一页
-                                                </button>
-                                                <button 
-                                                    disabled={currentPage === totalPages}
-                                                    onClick={() => setCurrentPage(p => p + 1)}
-                                                    className="px-3 py-1 border rounded text-xs disabled:opacity-50 hover:bg-gray-50"
-                                                >
-                                                    下一页
-                                                </button>
-                                            </div>
+                                    <AdminTable 
+                                        students={paginatedData}
+                                        onDelete={handleDeleteRow}
+                                        onEdit={(s) => setEditModal({ student: s, mode: activeTab === 'data' ? 'full' : activeTab })}
+                                        columns={[
+                                            { key: 'id', label: '学号' },
+                                            { key: 'name', label: '姓名' },
+                                            ...(activeTab === 'data' ? [{ key: 'gender', label: '性别' }, { key: 'adminClass', label: '行政班级' }, { key: 'optionClass', label: '选项' }, { key: 'teacherName', label: '教师' }] : []),
+                                            ...(activeTab === 'run' ? [{ key: 'runCount', label: '乐跑次数', render: s => s.scores.runCount }, { key: 'runScore', label: '乐跑成绩', render: s => s.scores.runScore + (s.scores.isRunFailed ? '(不合格)' : '') }] : []),
+                                            ...(activeTab === 'theory' ? [{ key: 'theory', label: '理论成绩', render: s => s.scores.theory === '' ? '-' : s.scores.theory }] : [])
+                                        ]}
+                                    />
+                                    
+                                    <div className="pt-2 flex justify-between items-center text-xs mt-auto">
+                                        <span>共 {filteredStudents.length} 条</span>
+                                        <div className="flex gap-1">
+                                            <button onClick={()=>setCurrentPageState(p=>Math.max(1, p-1))} disabled={currentPageState===1} className="border px-2 rounded">上一页</button>
+                                            <span>{currentPageState}/{totalPages}</span>
+                                            <button onClick={()=>setCurrentPageState(p=>Math.min(totalPages, p+1))} disabled={currentPageState===totalPages} className="border px-2 rounded">下一页</button>
                                         </div>
-                                    )}
-                                </div>
-                            )}
-                            {activeTab === 'teachers' && (
-                                <div className="space-y-6">
-                                    <div className="border-b pb-4"><h3 className="font-semibold mb-2">导入教师名单 (可选)</h3><input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileUpload(e, 'teachers')} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/></div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{teachers.map(t => (<div key={t.id} className="border p-3 rounded flex justify-between items-center"><span>{t.name}</span><span className="bg-gray-100 px-2 py-1 rounded text-xs">{t.id}</span></div>))}</div>
-                                </div>
-                            )}
-                            {activeTab === 'run' && (
-                                <div className="space-y-6">
-                                    <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4"><p className="text-sm text-yellow-700">Excel需包含列：<strong>学号</strong>、<strong>乐跑总次数</strong>、<strong>达成度评价表录入百分制成绩</strong></p></div>
-                                    <input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileUpload(e, 'run')} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                                    </div>
                                 </div>
                             )}
                         </div>
-                    </main>
-
-                    {/* 管理员编辑弹窗 */}
-                    {adminEditingStudent && (
-                        <AdminEditModal 
-                            student={adminEditingStudent} 
-                            onClose={() => setAdminEditingStudent(null)} 
-                            onSave={handleAdminSave} 
-                        />
-                    )}
+                    </div>
+                    {editModal && <AdminEditModal student={editModal.student} mode={editModal.mode} onClose={()=>setEditModal(null)} onSave={handleSaveEdit}/>}
                 </div>
             );
         };
 
-        // 教师面板
-        const TeacherPanel = ({ currentUser, students, setStudents, semester, setSemester, onLogout }) => {
+        const TeacherPanel = ({ currentUser, students, setStudents, semester, setSemester, onLogout, sportsList, specialtyConfig }) => {
             const [selectedClass, setSelectedClass] = useState('');
+            const [viewMode, setViewMode] = useState('card'); 
             const [editingStudent, setEditingStudent] = useState(null);
             const [showClaimModal, setShowClaimModal] = useState(false);
             const [toastMsg, setToastMsg] = useState('');
-            
-            const [viewMode, setViewMode] = useState('card'); 
-            const [batchField, setBatchField] = useState('regular1'); 
-            
-            const semType = getSemesterType(semester);
+            const [batchField, setBatchField] = useState('regular1');
+            const [docView, setDocView] = useState(null);
             const semesterOptions = getSemesterOptions();
+            const semType = getSemesterType(semester);
 
-            const myStudents = useMemo(() => students.filter(s => s.teacherName === currentUser.name), [students, currentUser.name]);
+            const myStudents = useMemo(() => students.filter(s => {
+                if (s.semester !== semester) return false;
+                const teachers = (s.teacherName || '').split(/\s+/);
+                return teachers.includes(currentUser.name);
+            }), [students, currentUser.name, semester]);
             
-            const myClasses = useMemo(() => {
-                const classes = [...new Set(myStudents.map(s => s.optionClass))];
-                return classes.sort((a, b) => a.localeCompare(b, 'zh-CN'));
-            }, [myStudents]);
-
+            const myClasses = useMemo(() => [...new Set(myStudents.map(s => s.optionClass))].sort(), [myStudents]);
             const classStudents = useMemo(() => {
-                if (!selectedClass) return [];
-                return myStudents.filter(s => s.optionClass === selectedClass).sort((a, b) => parseInt(a.id) - parseInt(b.id));
+                if(!selectedClass) return [];
+                return myStudents.filter(s => s.optionClass === selectedClass).sort((a,b)=>parseInt(a.id)-parseInt(b.id));
             }, [myStudents, selectedClass]);
+            
+            const matchedSport = useMemo(() => {
+                if (!selectedClass) return sportsList[0];
+                return sportsList.find(s => selectedClass.includes(s)) || sportsList[0];
+            }, [selectedClass, sportsList]);
+            const config = specialtyConfig[matchedSport] || { spec1: {type:'score'}, spec2: {type:'score'} };
 
             const allClassesForClaim = useMemo(() => {
                 const map = {};
-                students.forEach(s => {
+                const currentSemStudents = students.filter(s => s.semester === semester);
+                currentSemStudents.forEach(s => {
                     const clsName = s.optionClass;
                     if (!map[clsName]) map[clsName] = { name: clsName, teacher: s.teacherName, count: 0 };
                     map[clsName].count++;
                     if(s.teacherName && !map[clsName].teacher) map[clsName].teacher = s.teacherName;
                 });
                 return Object.values(map).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
-            }, [students]);
+            }, [students, semester]);
 
-            const handleSaveFullScore = (studentId, newScores) => {
-                setStudents(prev => prev.map(s => s.id === studentId ? { ...s, scores: newScores } : s));
+            const handleClaimClass = (className) => {
+                const teacherName = currentUser.name;
+                setStudents(prev => prev.map(s => {
+                    if (s.semester === semester && s.optionClass === className) {
+                        let names = (s.teacherName || '').split(/\s+/).filter(n => n);
+                        if (!names.includes(teacherName)) {
+                            names.push(teacherName); 
+                        } else {
+                            names = names.filter(n => n !== teacherName); 
+                        }
+                        return { ...s, teacherName: names.join(' ') };
+                    }
+                    return s;
+                }));
+                setToastMsg(`操作成功: "${className}"`);
             };
 
-            // 修改: 支持同时更新多个字段 (updates 是对象)
+            const handleBatchUpdate = (updates) => {
+                setStudents(prev => {
+                    const newStudents = [...prev];
+                    updates.forEach(u => {
+                        const idx = newStudents.findIndex(s => s.id === u.id && s.semester === semester);
+                        if(idx >= 0) newStudents[idx] = { ...newStudents[idx], ...u };
+                    });
+                    return newStudents;
+                });
+            };
+
+            const handleSaveOne = (sid, scores) => {
+                setStudents(prev => prev.map(s => (s.id === sid && s.semester === semester) ? { ...s, scores } : s));
+            };
+
             const handleBatchSaveScore = useCallback((studentId, updates) => {
                 setStudents(prev => prev.map(s => {
-                    if (s.id === studentId) {
+                    if (s.id === studentId && s.semester === semester) {
                         return { ...s, scores: { ...s.scores, ...updates } };
                     }
                     return s;
                 }));
-            }, []); 
-
-            const handleClaimClass = (className) => {
-                const updatedStudents = students.map(s => s.optionClass === className ? { ...s, teacherName: currentUser.name, teacherId: currentUser.id } : s);
-                setStudents(updatedStudents);
-                setToastMsg(`认领成功: "${className}"`);
-            };
+            }, [semester]); 
 
             const handleExport = () => {
                 if (!selectedClass) return;
@@ -788,126 +1166,172 @@
                     const row = {
                         '序号': index + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
                         '平时1': s.scores.regular1, '平时2': s.scores.regular2,
-                        '专项': ((parseFloat(s.scores.special1) + parseFloat(s.scores.special2))/2).toFixed(1),
-                        '统考': ((parseFloat(s.scores.stdItem1) + parseFloat(s.scores.stdItem2))/2).toFixed(1),
-                        '乐跑(次数)': s.scores.runCount, '乐跑(成绩)': s.scores.runScore,
+                        '专项': ((parseFloat(s.scores.special1||0) + parseFloat(s.scores.special2||0))/2).toFixed(1),
+                        '统考': ((calculateStdTestScore(s.scores.rawItem1, getTestItemsName(semType, s.gender).item1, s.gender) || 0) + (calculateStdTestScore(s.scores.rawItem2, getTestItemsName(semType, s.gender).item2, s.gender) || 0) / 2).toFixed(1),
+                        '晨跑(次数)': s.scores.runCount, '晨跑(成绩)': s.scores.runScore,
                     };
                     if (semType === 'spring') row['理论'] = s.scores.theory;
                     row['总评'] = finalScore;
                     return row;
                 });
                 const ws = XLSX.utils.json_to_sheet(exportData);
+                const range = XLSX.utils.decode_range(ws['!ref']);
+                const colMap = {};
+                for(let C = range.s.c; C <= range.e.c; ++C) {
+                    const cell = ws[XLSX.utils.encode_cell({r:0, c:C})];
+                    if(cell) colMap[cell.v] = C;
+                }
+                const colName = colMap['姓名'];
+                const colTotal = colMap['总评'];
+                const colRun = colMap['晨跑(成绩)'];
+
+                for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+                    const s = classStudents[R-1]; 
+                    if (!s) continue;
+                    const final = calculateFinalScore(s.scores, semType);
+                    const isTotalFail = parseFloat(final) < 60;
+                    const isRunFail = s.scores.isRunFailed;
+
+                    const colorCell = (c, r) => {
+                        const cellRef = XLSX.utils.encode_cell({c, r});
+                        if (!ws[cellRef]) ws[cellRef] = { t:'s', v: '' }; 
+                        ws[cellRef].s = { font: { color: { rgb: "FF0000" }, bold: true } };
+                    };
+
+                    if (isTotalFail) {
+                        if (colName !== undefined) colorCell(colName, R);
+                        if (colTotal !== undefined) colorCell(colTotal, R);
+                    }
+                    if (isRunFail && colRun !== undefined) { colorCell(colRun, R); }
+                }
+
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, "成绩表");
-                XLSX.writeFile(wb, `${semester}-${selectedClass}-${currentUser.name}.xlsx`);
+                XLSX.writeFile(wb, `${semester}-成绩表-${selectedClass}-${currentUser.name}.xlsx`);
             };
 
             const batchOptions = [
-                { key: 'regular1', label: '平时分1' },
-                { key: 'regular2', label: '平时分2' },
-                { key: 'special1', label: '专项分1' },
-                { key: 'special2', label: '专项分2' },
-                { key: 'runCount', label: '乐跑次数' },
-                { key: 'runScore', label: '乐跑得分' },
-                { key: 'stdItem1', label: '统考项目1' }, // 这里的 Key 用于识别
-                { key: 'stdItem2', label: '统考项目2' },
+                { key: 'regular1', label: '平时分1' }, { key: 'regular2', label: '平时分2' },
+                { key: 'special1', label: '专项分1' }, { key: 'special2', label: '专项分2' },
+                { key: 'runCount', label: '乐跑次数' }, { key: 'runScore', label: '乐跑得分' },
+                { key: 'stdItem1', label: '统考项目1' }, { key: 'stdItem2', label: '统考项目2' },
             ];
             if (semType === 'spring') batchOptions.push({ key: 'theory', label: '理论成绩' });
 
+            if (docView) {
+                return (
+                    <div className="min-h-screen bg-gray-50 pb-20 flex flex-col">
+                         <header className="bg-white shadow z-10 p-3 flex justify-between items-center">
+                            <h1 className="font-bold">文档管理</h1>
+                             <button onClick={() => setDocView(null)} className="text-sm text-gray-500">关闭</button>
+                        </header>
+                         <div className="flex-1 overflow-hidden p-4">
+                             <DocumentManager category={docView} teacherName={currentUser.name} onBack={() => setDocView(null)} />
+                         </div>
+                    </div>
+                );
+            }
+
             return (
-                <div className="min-h-screen pb-20">
-                    <header className="bg-white shadow sticky top-0 z-30">
-                        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
-                            <div>
-                                <h1 className="text-lg font-bold text-gray-800">{currentUser.name}老师</h1>
-                                <div className="mt-1">
-                                    <select value={semester} onChange={(e) => setSemester(e.target.value)} className="text-xs text-gray-500 border rounded p-1 bg-gray-50">
-                                        {semesterOptions.map(opt => (<option key={opt} value={opt}>{opt} ({opt.endsWith('1') ? '秋季' : '春季'})</option>))}
-                                    </select>
-                                </div>
-                            </div>
+                <div className="min-h-screen pb-20 flex flex-col">
+                    <header className="bg-white shadow z-10">
+                        <div className="p-3 flex justify-between items-center">
+                            <h1 className="font-bold">{currentUser.name}老师</h1>
                             <div className="flex items-center gap-2">
-                                <button onClick={onLogout} className="text-sm text-gray-500 hover:text-red-500">退出</button>
+                                <select value={semester} onChange={(e) => setSemester(e.target.value)} className="text-xs text-gray-500 border rounded p-1 bg-gray-50">{semesterOptions.map(opt => (<option key={opt} value={opt}>{opt}</option>))}</select>
+                                <button onClick={onLogout} className="text-sm text-gray-500">退出</button>
                             </div>
                         </div>
-                        <div className="px-4 py-2 bg-gray-50 border-t overflow-x-auto whitespace-nowrap hide-scrollbar flex items-center">
-                            <button onClick={() => setShowClaimModal(true)} className="mr-3 px-3 py-1.5 rounded-full text-sm border border-dashed border-blue-400 text-blue-600 bg-blue-50 flex items-center gap-1 hover:bg-blue-100">
-                                认领班级
-                            </button>
-                            {myClasses.map(cls => (
-                                <button key={cls} onClick={() => setSelectedClass(cls)} className={`mr-3 px-4 py-1.5 rounded-full text-sm transition-all ${selectedClass === cls ? 'bg-blue-600 text-white shadow' : 'bg-white border text-gray-600'}`}>
-                                    {cls}
-                                </button>
-                            ))}
+                        <div className="px-3 pb-2 flex gap-2 overflow-x-auto hide-scrollbar border-b border-gray-100">
+                             <button onClick={() => setDocView('syllabus')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-600 text-xs font-bold whitespace-nowrap">教学大纲</button>
+                             <button onClick={() => setDocView('schedule')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-purple-50 text-purple-600 text-xs font-bold whitespace-nowrap">教学进度表</button>
+                             <button onClick={() => setDocView('plan')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-teal-50 text-teal-600 text-xs font-bold whitespace-nowrap">教案</button>
+                        </div>
+                        <div className="px-3 py-2 bg-gray-50 flex items-center scrolling-wrapper gap-2">
+                            <button onClick={() => setShowClaimModal(true)} className="flex-shrink-0 mr-3 px-3 py-1.5 rounded-full text-sm border border-dashed border-blue-400 text-blue-600 bg-blue-50 flex items-center gap-1 hover:bg-blue-100 whitespace-nowrap">认领班级</button>
+                            {myClasses.map(c => (<button key={c} onClick={()=>{setSelectedClass(c); setViewMode('card');}} className={`flex-shrink-0 mr-2 px-3 py-1 rounded text-sm ${selectedClass===c?'bg-blue-600 text-white':'bg-white border'}`}>{c}</button>))}
                         </div>
                     </header>
 
-                    <main className="max-w-7xl mx-auto px-4 py-4">
+                    <main className="flex-1 overflow-hidden relative">
                         {!selectedClass ? (
-                            <div className="text-center mt-20 text-gray-400">
-                                <Icon name="clipboard-list" className="mx-auto mb-2 h-12 w-12 opacity-50"/>
-                                <p>请选择班级或点击“认领班级”添加新班级</p>
-                            </div>
+                            <div className="p-10 text-center text-gray-400">请选择班级 (或点击上方"认领班级"添加)</div>
                         ) : (
-                            <div>
-                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
-                                    <span className="text-sm text-gray-500">班级人数: {classStudents.length}</span>
-                                    
-                                    <div className="flex gap-2">
-                                        <div className="flex bg-white rounded-lg shadow-sm border p-1">
-                                            <button onClick={() => setViewMode('card')} className={`px-3 py-1 text-xs rounded ${viewMode === 'card' ? 'bg-blue-100 text-blue-700 font-bold' : 'text-gray-500'}`}>卡片模式</button>
-                                            <button onClick={() => setViewMode('batch')} className={`px-3 py-1 text-xs rounded ${viewMode === 'batch' ? 'bg-blue-100 text-blue-700 font-bold' : 'text-gray-500'}`}>按项目录入</button>
-                                        </div>
-                                        
-                                        <button onClick={handleExport} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700">
-                                            <Icon name="download" size={14}/> 导出
-                                        </button>
-                                    </div>
+                            <>
+                                <div className="p-2 bg-white border-b flex gap-2 overflow-x-auto">
+                                    <button onClick={()=>setViewMode('card')} className={`px-3 py-1 text-xs rounded border ${viewMode==='card'?'bg-blue-50 border-blue-500 text-blue-700':''}`}>成绩录入</button>
+                                    <button onClick={()=>setViewMode('std')} className={`px-3 py-1 text-xs rounded border ${viewMode==='std'?'bg-blue-50 border-blue-500 text-blue-700':''}`}>统考记录</button>
+                                    <button onClick={()=>setViewMode('attendance')} className={`px-3 py-1 text-xs rounded border ${viewMode==='attendance'?'bg-blue-50 border-blue-500 text-blue-700':''}`}>考勤管理</button>
                                 </div>
 
-                                {viewMode === 'batch' && (
-                                    <div className="mb-4 flex items-center gap-2">
-                                        <label className="text-sm font-bold text-gray-700">录入项目:</label>
-                                        <select 
-                                            value={batchField} 
-                                            onChange={(e) => setBatchField(e.target.value)}
-                                            className="border border-blue-300 rounded px-2 py-1 text-sm focus:ring-2 ring-blue-500 outline-none"
-                                        >
-                                            {batchOptions.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
-                                        </select>
-                                    </div>
-                                )}
-
-                                {viewMode === 'card' ? (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        {classStudents.map(s => {
-                                            const final = calculateFinalScore(s.scores, semType);
-                                            return (
-                                                <div key={s.id} onClick={() => setEditingStudent(s)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-pointer active:scale-95 duration-100">
-                                                    <div className="flex justify-between items-start mb-2">
-                                                        <div><h3 className="font-bold text-gray-800">{s.name}</h3><p className="text-xs text-gray-500">{s.id} | {s.gender}</p></div>
-                                                        <div className={`text-lg font-bold ${parseFloat(final) < 60 ? 'text-red-500' : 'text-green-600'}`}>{final}</div>
+                                <div className="h-full overflow-y-auto p-2 pb-24">
+                                    {viewMode === 'card' && (
+                                        <>
+                                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+                                                <span className="text-sm text-gray-500">班级人数: {classStudents.length}</span>
+                                                <div className="flex gap-2">
+                                                    <div className="flex bg-white rounded-lg shadow-sm border p-1">
+                                                        <button onClick={() => setViewMode('card')} className={`px-3 py-1 text-xs rounded bg-blue-100 text-blue-700 font-bold`}>卡片模式</button>
+                                                        <button onClick={() => setViewMode('batch')} className={`px-3 py-1 text-xs rounded text-gray-500`}>按项目录入</button>
                                                     </div>
-                                                    <div className="flex gap-2 text-xs text-gray-400 mt-2 border-t pt-2">
-                                                        <span>乐跑:{s.scores.runScore}</span><span>专项:{(parseFloat(s.scores.special1)+parseFloat(s.scores.special2))/2}</span>
-                                                    </div>
+                                                    <button onClick={handleExport} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700"><Icon name="download" size={14}/> 导出</button>
                                                 </div>
-                                            );
-                                        })}
-                                    </div>
-                                ) : (
-                                    <BatchEntryTable 
-                                        students={classStudents} 
-                                        field={batchField} 
-                                        fieldName={batchOptions.find(o => o.key === batchField)?.label} 
-                                        semester={semester}
-                                        onBatchSave={handleBatchSaveScore}
-                                    />
-                                )}
-                            </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                {classStudents.map(s => {
+                                                    const final = calculateFinalScore(s.scores, semType);
+                                                    const isFail = parseFloat(final) < 60;
+                                                    return (
+                                                        <div key={s.id} onClick={()=>setEditingStudent(s)} className="bg-white p-4 rounded shadow-sm border border-gray-100 active:scale-95 transition-transform">
+                                                            <div className="flex justify-between items-start">
+                                                                <div><h3 className="font-bold">{s.name}</h3><p className="text-xs text-gray-500">{s.id}</p></div>
+                                                                <div className="text-right">
+                                                                    <div className={`font-bold text-lg ${isFail ? 'text-red-600' : 'text-blue-600'}`}>{final}</div>
+                                                                    {s.scores.isRunFailed && <span className="text-xs text-red-500 block">乐跑不合格</span>}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {viewMode === 'batch' && (
+                                        <>
+                                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+                                                <span className="text-sm text-gray-500">班级人数: {classStudents.length}</span>
+                                                <div className="flex gap-2">
+                                                    <div className="flex bg-white rounded-lg shadow-sm border p-1">
+                                                        <button onClick={() => setViewMode('card')} className={`px-3 py-1 text-xs rounded text-gray-500`}>卡片模式</button>
+                                                        <button onClick={() => setViewMode('batch')} className={`px-3 py-1 text-xs rounded bg-blue-100 text-blue-700 font-bold`}>按项目录入</button>
+                                                    </div>
+                                                    <select value={batchField} onChange={(e) => setBatchField(e.target.value)} className="border border-blue-300 rounded px-2 py-1 text-sm focus:ring-2 ring-blue-500 outline-none">
+                                                        {batchOptions.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <BatchEntryTable students={classStudents} field={batchField} fieldName={batchOptions.find(o => o.key === batchField)?.label} semester={semester} config={config} onBatchSave={handleBatchSaveScore} />
+                                        </>
+                                    )}
+
+                                    {viewMode === 'std' && (
+                                        <div className="h-full">
+                                            <StdTestModule students={classStudents} semester={semester} className={selectedClass} teacherName={currentUser.name} onSave={handleBatchUpdate} onClose={()=>setViewMode('card')} />
+                                        </div>
+                                    )}
+
+                                    {viewMode === 'attendance' && (
+                                        <div className="h-full">
+                                            <AttendanceModule students={classStudents} semester={semester} className={selectedClass} teacherName={currentUser.name} onSave={handleBatchUpdate} onClose={()=>setViewMode('card')} />
+                                        </div>
+                                    )}
+                                </div>
+                            </>
                         )}
                     </main>
 
+                    {/* 认领弹窗 */}
                     {showClaimModal && (
                         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-4">
                             <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh] relative z-[101]">
@@ -916,27 +1340,30 @@
                                     <button onClick={() => setShowClaimModal(false)} className="text-2xl">&times;</button>
                                 </div>
                                 <div className="p-4 overflow-y-auto">
-                                    <p className="text-sm text-gray-500 mb-4">列表已按名称排序。点击“添加”即可将该班级学生分配到您名下。</p>
+                                    <p className="text-sm text-gray-500 mb-4">点击“添加”将班级加入您的列表。再次点击可取消。</p>
                                     <div className="space-y-2">
-                                        {allClassesForClaim.map(cls => (
-                                            <div key={cls.name} className="flex justify-between items-center p-3 border rounded hover:bg-gray-50">
-                                                <div>
-                                                    <div className="font-bold text-gray-800">{cls.name}</div>
-                                                    <div className="text-xs text-gray-500">
-                                                        学生数: {cls.count} | 
-                                                        当前教师: {cls.teacher ? <span className="text-green-600">{cls.teacher}</span> : <span className="text-red-500">未分配</span>}
+                                        {allClassesForClaim.map(cls => {
+                                            // Check using string splitting
+                                            const teacherNames = (cls.teacher || '').split(/\s+/);
+                                            const isClaimed = teacherNames.includes(currentUser.name);
+                                            return (
+                                                <div key={cls.name} className="flex justify-between items-center p-3 border rounded hover:bg-gray-50">
+                                                    <div>
+                                                        <div className="font-bold text-gray-800">{cls.name}</div>
+                                                        <div className="text-xs text-gray-500">
+                                                            学生: {cls.count} | 
+                                                            原分配: {cls.teacher ? <span className="text-green-600">{cls.teacher}</span> : <span className="text-red-500">未分配</span>}
+                                                        </div>
                                                     </div>
+                                                    <button 
+                                                        onClick={() => handleClaimClass(cls.name)}
+                                                        className={`text-xs px-3 py-1.5 rounded text-white ${isClaimed ? 'bg-gray-400 hover:bg-gray-500' : 'bg-blue-600 hover:bg-blue-700'}`}
+                                                    >
+                                                        {isClaimed ? '取消认领' : '添加'}
+                                                    </button>
                                                 </div>
-                                                <button 
-                                                    type="button"
-                                                    onClick={(e) => { e.stopPropagation(); handleClaimClass(cls.name); }}
-                                                    className={`text-xs px-3 py-1.5 rounded text-white ${cls.teacher === currentUser.name ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-                                                    disabled={cls.teacher === currentUser.name}
-                                                >
-                                                    {cls.teacher === currentUser.name ? '已认领' : '添加'}
-                                                </button>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             </div>
@@ -947,40 +1374,52 @@
                         <GradingModal 
                             student={editingStudent} 
                             semester={semester} 
-                            onClose={() => setEditingStudent(null)} 
-                            onSave={handleSaveFullScore}
+                            onClose={()=>setEditingStudent(null)} 
+                            onSave={handleSaveOne}
+                            sportsList={sportsList}
+                            specialtyConfig={specialtyConfig}
                         />
                     )}
                     
-                    {toastMsg && <Toast message={toastMsg} onClose={() => setToastMsg('')} />}
+                    {toastMsg && <Toast msg={toastMsg} onClose={() => setToastMsg('')} />}
                 </div>
             );
         };
 
         const App = () => {
             const [user, setUser] = useState(null);
-            const [students, setStudents] = useState(() => {
-                const saved = localStorage.getItem('pe_students');
-                return saved ? JSON.parse(saved) : INITIAL_STUDENTS;
-            });
-            const [teachers, setTeachers] = useState(() => {
-                const saved = localStorage.getItem('pe_teachers');
-                return saved ? JSON.parse(saved) : INITIAL_TEACHERS;
-            });
-            const [semester, setSemester] = useState(() => {
-                return localStorage.getItem('pe_semester') || getDefaultSemester();
-            });
+            
+            const [students, setStudents] = useState(() => JSON.parse(localStorage.getItem('pe_students')) || []);
+            const [teachers, setTeachers] = useState(() => JSON.parse(localStorage.getItem('pe_teachers')) || INITIAL_TEACHERS);
+            const [sportsList, setSportsList] = useState(() => JSON.parse(localStorage.getItem('pe_sportsList')) || DEFAULT_SPORTS_LIST);
+            const [specialtyConfig, setConfig] = useState(() => JSON.parse(localStorage.getItem('pe_specConfig')) || DEFAULT_SPECIALTY_CONFIG);
+            const [semester, setSemester] = useState(getDefaultSemester());
 
-            useEffect(() => { localStorage.setItem('pe_students', JSON.stringify(students)); }, [students]);
-            useEffect(() => { localStorage.setItem('pe_teachers', JSON.stringify(teachers)); }, [teachers]);
-            useEffect(() => { localStorage.setItem('pe_semester', semester); }, [semester]);
+            useEffect(() => localStorage.setItem('pe_students', JSON.stringify(students)), [students]);
+            useEffect(() => localStorage.setItem('pe_teachers', JSON.stringify(teachers)), [teachers]);
+            useEffect(() => localStorage.setItem('pe_sportsList', JSON.stringify(sportsList)), [sportsList]);
+            useEffect(() => localStorage.setItem('pe_specConfig', JSON.stringify(specialtyConfig)), [specialtyConfig]);
             useEffect(() => { if(window.lucide) window.lucide.createIcons(); }, []);
 
             if (!user) return <LoginPage onLogin={setUser} users={teachers} />;
 
             return user.role === 'admin' 
-                ? <AdminPanel students={students} setStudents={setStudents} teachers={teachers} setTeachers={setTeachers} semester={semester} setSemester={setSemester} onLogout={() => setUser(null)} />
-                : <TeacherPanel currentUser={user} students={students} setStudents={setStudents} semester={semester} setSemester={setSemester} onLogout={() => setUser(null)} />;
+                ? <AdminPanel 
+                    students={students} setStudents={setStudents} 
+                    semester={semester} setSemester={setSemester} 
+                    onLogout={() => setUser(null)}
+                    sportsList={sportsList} setSportsList={setSportsList}
+                    config={specialtyConfig} setConfig={setConfig}
+                    teachers={teachers} setTeachers={setTeachers}
+                  />
+                : <TeacherPanel 
+                    currentUser={user} 
+                    students={students} setStudents={setStudents}
+                    semester={semester} setSemester={setSemester}
+                    onLogout={() => setUser(null)}
+                    sportsList={sportsList}
+                    specialtyConfig={specialtyConfig}
+                  />;
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
