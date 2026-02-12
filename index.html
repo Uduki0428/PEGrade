@@ -1255,7 +1255,7 @@
                         '序号': index + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
                         '平时1': s.scores.regular1, '平时2': s.scores.regular2,
                         '专项': ((parseFloat(s.scores.special1||0) + parseFloat(s.scores.special2||0))/2).toFixed(1),
-                        '统考': ((calculateStdTestScore(s.scores.rawItem1, getTestItemsName(semType, s.gender).item1, s.gender) || 0) + (calculateStdTestScore(s.scores.rawItem2, getTestItemsName(semType, s.gender).item2, s.gender) || 0)) / 2).toFixed(1),
+                        '统考': (((calculateStdTestScore(s.scores.rawItem1, getTestItemsName(semType, s.gender).item1, s.gender) || 0) + (calculateStdTestScore(s.scores.rawItem2, getTestItemsName(semType, s.gender).item2, s.gender) || 0)) / 2).toFixed(1),
                         '晨跑(次数)': s.scores.runCount, '晨跑(成绩)': s.scores.runScore,
                     };
                     if (semType === 'spring') row['理论'] = s.scores.theory;
