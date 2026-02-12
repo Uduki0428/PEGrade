@@ -130,7 +130,9 @@
                 }));
             },
             async uploadDoc(teacherName, category, file) {
-                const path = `${teacherName}/${category}/${Date.now()}_${file.name}`;
+                const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
+                const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+                const path = `${category}/${safeName}`;
                 const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file);
                 if (uploadErr) throw uploadErr;
                 await supabase.from('documents').insert({
@@ -1610,8 +1612,26 @@
             );
         };
 
+        // --- ErrorBoundary: 防止白屏，显示具体错误 ---
+        class ErrorBoundary extends React.Component {
+            constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+            static getDerivedStateFromError(error) { return { hasError: true, error }; }
+            componentDidCatch(error, info) { console.error('ErrorBoundary caught:', error, info); }
+            render() {
+                if (this.state.hasError) {
+                    return React.createElement('div', { style: { padding: '40px', textAlign: 'center' } },
+                        React.createElement('h2', { style: { color: '#ef4444', marginBottom: '16px' } }, '⚠️ 页面出现错误'),
+                        React.createElement('pre', { style: { background: '#f3f4f6', padding: '16px', borderRadius: '8px', textAlign: 'left', overflow: 'auto', fontSize: '12px', maxHeight: '300px' } }, String(this.state.error)),
+                        React.createElement('button', { onClick: () => { this.setState({ hasError: false, error: null }); }, style: { marginTop: '16px', padding: '8px 24px', background: '#3b82f6', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer' } }, '重试'),
+                        React.createElement('p', { style: { marginTop: '12px', color: '#6b7280', fontSize: '13px' } }, '请截图此页面并发送给开发者')
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
     </script>
 </body>
 </html>
