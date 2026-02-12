@@ -133,11 +133,17 @@
                 const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
                 const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
                 const path = `${category}/${safeName}`;
-                const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file);
+                // 明确设置 contentType，让浏览器能正确识别文件类型并内联显示
+                const mimeMap = { pdf:'application/pdf', doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ppt:'application/vnd.ms-powerpoint', pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation', xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp', svg:'image/svg+xml' };
+                const contentType = mimeMap[ext] || file.type || 'application/octet-stream';
+                const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file, {
+                    contentType,
+                    cacheControl: '3600'
+                });
                 if (uploadErr) throw uploadErr;
                 await supabase.from('documents').insert({
                     teacher_name: teacherName, category, file_name: file.name,
-                    file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: file.type, storage_path: path
+                    file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path
                 });
             },
             async deleteDoc(id, storagePath) {
@@ -459,7 +465,7 @@
                                     <div className="text-xs text-gray-500">{doc.date} · {doc.size}{!canPreviewInApp ? ' · 点击打开查看' : ''}</div>
                                 </div>
                                 <div className="flex gap-2 shrink-0">
-                                    <a href={doc.url} download={doc.name} target="_blank" rel="noopener" className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a>
+                                    <a href={doc.url + '?download='} target="_blank" rel="noopener" className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a>
                                     <button onClick={() => handleDelete(doc)} className="text-red-500 text-xs border px-2 py-1 rounded hover:bg-red-50">删除</button>
                                 </div>
                             </div>);
@@ -471,7 +477,7 @@
                                 <div className="p-2 border-b flex justify-between items-center shrink-0">
                                     <h3 className="font-bold truncate text-sm flex-1 mr-2">{previewDoc.name}</h3>
                                     <div className="flex gap-2 shrink-0 items-center">
-                                        <a href={previewDoc.url} download={previewDoc.name} target="_blank" rel="noopener" className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
+                                        <a href={previewDoc.url + '?download='} target="_blank" rel="noopener" className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
                                         <button onClick={() => setPreviewDoc(null)} className="text-2xl leading-none">&times;</button>
                                     </div>
                                 </div>
