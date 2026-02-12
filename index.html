@@ -120,7 +120,8 @@
                 }));
             },
             async uploadDoc(teacherName, category, file) {
-                const path = `${teacherName}/${category}/${Date.now()}_${file.name}`;
+                const ext = file.name.split('.').pop() || 'bin';
+                const path = `${category}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
                 const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file);
                 if (uploadErr) throw uploadErr;
                 await supabase.from('documents').insert({
@@ -931,7 +932,7 @@
             const [activeTab, setActiveTab] = useState('data');
             const [searchTerm, setSearchTerm] = useState('');
             const [currentPage, setCurrentPage] = useState(1);
-            const [editModal, setEditModal] = useState(null);
+            const [adminEditingStudent, setAdminEditingStudent] = useState(null);
             const [jumpPage, setJumpPage] = useState('');
             const itemsPerPage = 20;
             const semesterOptions = getSemesterOptions();
