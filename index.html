@@ -439,21 +439,19 @@
             };
             const handleDelete = async (doc) => { if (!confirm("确定删除？")) return; await DB.deleteDoc(doc.id, doc.storagePath); setDocs(docs.filter(d => d.id !== doc.id)); };
             const titleMap = { 'syllabus': '教学大纲', 'schedule': '教学进度表', 'plan': '教案' };
-
-            const getPreviewType = (doc) => {
-                const ext = (doc.name || '').split('.').pop().toLowerCase();
-                if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return 'image';
-                if (['xls', 'xlsx'].includes(ext)) return 'excel';
-                if (['pdf', 'doc', 'docx', 'ppt', 'pptx'].includes(ext)) return 'gdocs';
-                return 'none';
+            const getFileType = (name) => {
+                const ext = (name || '').split('.').pop().toLowerCase();
+                if (['jpg','jpeg','png','gif','webp','svg','bmp'].includes(ext)) return 'image';
+                if (['xls','xlsx'].includes(ext)) return 'excel';
+                if (ext === 'pdf') return 'pdf';
+                if (['doc','docx','ppt','pptx'].includes(ext)) return 'office';
+                return 'other';
             };
-
             const handlePreview = (doc) => {
-                const type = getPreviewType(doc);
-                if (type === 'none') { window.open(doc.url, '_blank'); return; }
-                setPreviewDoc({ ...doc, previewType: type });
+                const ft = getFileType(doc.name);
+                if (ft === 'other') { window.open(doc.url, '_blank'); return; }
+                setPreviewDoc({ ...doc, fileType: ft });
             };
-
             return (
                 <div className="p-4 bg-white h-full flex flex-col relative">
                     <div className="flex justify-between items-center mb-4 pb-4 border-b"><h3 className="font-bold text-lg">{titleMap[category]}管理</h3><button onClick={onBack} className="text-gray-500">返回</button></div>
@@ -466,34 +464,72 @@
             );
         };
 
+        // --- 文件预览弹窗（兼容移动端） ---
         const FilePreviewModal = ({ doc, onClose }) => {
-            const renderPreview = () => {
-                if (doc.previewType === 'image') {
-                    return <img src={doc.url} alt={doc.name} className="max-w-full max-h-full object-contain" />;
-                }
-                if (doc.previewType === 'excel') {
-                    return <ExcelPreviewUrl url={doc.url} />;
-                }
-                if (doc.previewType === 'gdocs') {
-                    const viewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(doc.url)}&embedded=true`;
-                    return <iframe src={viewerUrl} className="w-full h-full border-none" />;
-                }
-                return <div className="text-gray-500 p-8">此格式不支持在线预览</div>;
-            };
             return (
                 <div className="fixed inset-0 z-[100] bg-black bg-opacity-75 flex items-center justify-center p-2 sm:p-4">
                     <div className="bg-white rounded-lg w-full h-full max-w-4xl max-h-[95vh] flex flex-col relative">
                         <div className="p-2 border-b flex justify-between items-center shrink-0">
                             <h3 className="font-bold truncate text-sm flex-1 mr-2">{doc.name}</h3>
-                            <div className="flex gap-2 shrink-0">
+                            <div className="flex gap-2 shrink-0 items-center">
                                 <a href={doc.url} download={doc.name} target="_blank" rel="noopener" className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
                                 <button onClick={onClose} className="text-2xl leading-none">&times;</button>
                             </div>
                         </div>
                         <div className="flex-1 overflow-auto bg-gray-100 flex items-center justify-center">
-                            {renderPreview()}
+                            {doc.fileType === 'image' && <img src={doc.url} alt={doc.name} className="max-w-full max-h-full object-contain" />}
+                            {doc.fileType === 'excel' && <ExcelPreviewUrl url={doc.url} />}
+                            {doc.fileType === 'pdf' && <PdfPreview url={doc.url} />}
+                            {doc.fileType === 'office' && <OfficePreview url={doc.url} name={doc.name} />}
                         </div>
                     </div>
+                </div>
+            );
+        };
+
+        // --- PDF 预览：fetch 后转 blob URL，避免移动端直接下载 ---
+        const PdfPreview = ({ url }) => {
+            const [blobUrl, setBlobUrl] = useState(null);
+            const [error, setError] = useState(false);
+            useEffect(() => {
+                let revoke = null;
+                (async () => {
+                    try {
+                        const res = await fetch(url);
+                        const blob = await res.blob();
+                        const u = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+                        setBlobUrl(u);
+                        revoke = u;
+                    } catch (e) { setError(true); }
+                })();
+                return () => { if (revoke) URL.revokeObjectURL(revoke); };
+            }, [url]);
+            if (error) return <div className="text-center p-8"><p className="text-gray-500 mb-4">PDF 预览加载失败</p><a href={url} target="_blank" rel="noopener" className="text-blue-600 underline">点击此处在新窗口打开</a></div>;
+            if (!blobUrl) return <div className="text-gray-400 animate-pulse">加载 PDF 中...</div>;
+            return <iframe src={blobUrl} className="w-full h-full border-none" />;
+        };
+
+        // --- Office 文档预览：微软 Office Online Viewer ---
+        const OfficePreview = ({ url, name }) => {
+            const [viewerFailed, setViewerFailed] = useState(false);
+            const msViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
+            if (viewerFailed) {
+                return (
+                    <div className="text-center p-8">
+                        <p className="text-gray-500 mb-2">在线预览暂不可用</p>
+                        <p className="text-xs text-gray-400 mb-4">可能是网络限制或文件格式不兼容</p>
+                        <a href={url} target="_blank" rel="noopener" className="inline-block bg-blue-600 text-white px-4 py-2 rounded text-sm">下载文件查看</a>
+                    </div>
+                );
+            }
+            return (
+                <div className="w-full h-full relative">
+                    <iframe
+                        src={msViewerUrl}
+                        className="w-full h-full border-none"
+                        onError={() => setViewerFailed(true)}
+                    />
+                    <button onClick={() => setViewerFailed(true)} className="absolute bottom-2 right-2 text-xs text-gray-400 underline">预览失败？</button>
                 </div>
             );
         };
