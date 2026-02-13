@@ -24,7 +24,15 @@
     <!-- Supabase JS SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+    <script>
+        // 验证库加载状态
+        window.addEventListener('load', function() {
+            console.log('[LIB CHECK] pdfjsLib:', typeof window.pdfjsLib);
+            console.log('[LIB CHECK] mammoth:', typeof window.mammoth);
+            if (window.mammoth) console.log('[LIB CHECK] mammoth.convertToHtml:', typeof window.mammoth.convertToHtml);
+        });
+    </script>
 
     <style>
         body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #f3f4f6; -webkit-tap-highlight-color: transparent; }
@@ -148,11 +156,25 @@
                 await supabase.storage.from('documents').remove([storagePath]);
                 await supabase.from('documents').delete().eq('id', id);
             },
-            // 通过 Supabase SDK 下载文件（解决跨域问题）
+            // 多策略下载文件（兼容所有设备）
             async downloadFile(storagePath) {
-                const { data, error } = await supabase.storage.from('documents').download(storagePath);
-                if (error) throw error;
-                return data; // 返回 Blob
+                const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/documents/${storagePath}`;
+                // 策略1：Supabase SDK download
+                try {
+                    const { data, error } = await supabase.storage.from('documents').download(storagePath);
+                    if (!error && data && data.size > 0) return data;
+                } catch(e) { console.warn('SDK download failed:', e); }
+                // 策略2：fetch + apikey header
+                try {
+                    const res = await fetch(publicUrl, { headers: { 'apikey': SUPABASE_ANON_KEY } });
+                    if (res.ok) return await res.blob();
+                } catch(e) { console.warn('Fetch with key failed:', e); }
+                // 策略3：纯 fetch（公开桶）
+                try {
+                    const res = await fetch(publicUrl);
+                    if (res.ok) return await res.blob();
+                } catch(e) { console.warn('Plain fetch failed:', e); }
+                throw new Error('文件下载失败，请检查网络');
             }
         };
 
@@ -499,12 +521,13 @@
             );
         };
 
-        // --- PDF 预览：PDF.js + Supabase SDK 下载（解决跨域） ---
+        // --- PDF 预览：PDF.js + 多策略下载 ---
         const PdfCanvasPreview = ({ sp, url }) => {
             const containerRef = React.useRef(null);
             const [status, setStatus] = useState('loading');
+            const [errMsg, setErrMsg] = useState('');
             useEffect(() => {
-                if (!window.pdfjsLib) { setStatus('error'); return; }
+                if (!window.pdfjsLib) { setErrMsg('PDF 预览库未加载'); setStatus('error'); return; }
                 let cancelled = false;
                 (async () => {
                     try {
@@ -532,35 +555,50 @@
                             await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
                         }
                         setStatus('done');
-                    } catch (e) { console.error('PDF render:', e); if (!cancelled) setStatus('error'); }
+                    } catch (e) {
+                        console.error('PDF render:', e);
+                        if (!cancelled) { setErrMsg(e.message || '未知错误'); setStatus('error'); }
+                    }
                 })();
                 return () => { cancelled = true; };
             }, [sp]);
             return (
                 <div className="p-2 w-full">
                     {status === 'loading' && <div className="text-center py-10 text-gray-400 animate-pulse">正在加载 PDF...</div>}
-                    {status === 'error' && <div className="text-center py-10"><p className="text-gray-500 mb-3">PDF 预览失败</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>}
+                    {status === 'error' && <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ PDF 预览失败{errMsg ? ': ' + errMsg : ''}</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>}
                     <div ref={containerRef} />
                 </div>
             );
         };
 
-        // --- DOCX 预览：mammoth.js + Supabase SDK 下载 ---
+        // --- DOCX 预览：mammoth.js + 多策略下载 ---
         const DocxPreview = ({ sp, url }) => {
             const [html, setHtml] = useState(null);
-            const [error, setError] = useState(false);
+            const [errMsg, setErrMsg] = useState(null);
             useEffect(() => {
-                if (!window.mammoth) { setError(true); return; }
                 (async () => {
+                    // 检查 mammoth 是否加载
+                    const m = window.mammoth;
+                    if (!m || typeof m.convertToHtml !== 'function') {
+                        setErrMsg('文档预览库未加载（mammoth.js），请刷新页面重试');
+                        return;
+                    }
                     try {
                         const blob = await DB.downloadFile(sp);
                         const buf = await blob.arrayBuffer();
-                        const result = await window.mammoth.convertToHtml({ arrayBuffer: buf });
-                        setHtml(result.value);
-                    } catch (e) { console.error('DOCX render:', e); setError(true); }
+                        const result = await m.convertToHtml({ arrayBuffer: buf });
+                        if (result && result.value) {
+                            setHtml(result.value);
+                        } else {
+                            setErrMsg('文档内容为空');
+                        }
+                    } catch (e) {
+                        console.error('DOCX render:', e);
+                        setErrMsg('文档预览失败: ' + (e.message || '未知错误'));
+                    }
                 })();
             }, [sp]);
-            if (error) return <div className="text-center py-10"><p className="text-gray-500 mb-3">文档预览失败</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>;
+            if (errMsg) return <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ {errMsg}</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>;
             if (html === null) return <div className="text-center py-10 text-gray-400 animate-pulse">正在加载文档...</div>;
             return <div className="p-4 bg-white prose prose-sm max-w-none" style={{fontSize:'14px',lineHeight:'1.8'}} dangerouslySetInnerHTML={{__html: html}} />;
         };
@@ -577,10 +615,10 @@
             );
         };
 
-        // --- Excel 预览：XLSX.js + Supabase SDK 下载 ---
+        // --- Excel 预览：XLSX.js + 多策略下载 ---
         const ExcelPreview = ({ sp, url }) => {
             const [html, setHtml] = useState(null);
-            const [error, setError] = useState(false);
+            const [errMsg, setErrMsg] = useState(null);
             useEffect(() => {
                 (async () => {
                     try {
@@ -588,10 +626,10 @@
                         const buf = await blob.arrayBuffer();
                         const wb = XLSX.read(buf, { type: 'array' });
                         setHtml(XLSX.utils.sheet_to_html(wb.Sheets[wb.SheetNames[0]]));
-                    } catch (e) { console.error('Excel render:', e); setError(true); }
+                    } catch (e) { console.error('Excel render:', e); setErrMsg(e.message || '未知错误'); }
                 })();
             }, [sp]);
-            if (error) return <div className="text-center py-10"><p className="text-gray-500 mb-3">表格预览失败</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>;
+            if (errMsg) return <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ 表格预览失败: {errMsg}</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>;
             if (html === null) return <div className="text-center py-10 text-gray-400 animate-pulse">正在加载表格...</div>;
             return <div className="w-full bg-white p-2 overflow-auto text-sm" dangerouslySetInnerHTML={{__html: html}} />;
         };
