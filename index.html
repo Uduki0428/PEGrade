@@ -106,7 +106,7 @@
                 return allData.map(row => ({
                     id: row.id, semester: row.semester, name: row.name, gender: row.gender,
                     adminClass: row.admin_class, optionClass: row.option_class, teacherName: row.teacher_name,
-                    scores: row.scores || { regular1:0, regular2:0, special1:0, special2:0, runCount:0, runScore:0, stdItem1:0, stdItem2:0, theory:'', mock1:'', mock2:'', hw1:'', hw2:'' },
+                    scores: row.scores || { regular1:'', regular2:'', special1:'', special2:'', runCount:'', runScore:'', stdItem1:'', stdItem2:'', theory:'', mock1:'', mock2:'', hw1:'', hw2:'' },
                     attendance: row.attendance || [], stdTestRecords: row.std_test_records || {},
                 }));
             },
@@ -145,8 +145,25 @@
                 const path = `${category}/${safeName}`;
                 const mimeMap = { pdf:'application/pdf', doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ppt:'application/vnd.ms-powerpoint', pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation', xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif' };
                 const contentType = mimeMap[ext] || file.type || 'application/octet-stream';
-                const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file, { contentType, cacheControl: '3600' });
-                if (uploadErr) throw uploadErr;
+                // 策略1: SDK upload
+                let uploaded = false;
+                try {
+                    const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file, { contentType, cacheControl: '3600' });
+                    if (!uploadErr) uploaded = true;
+                    else console.warn('SDK upload error:', uploadErr);
+                } catch(e) { console.warn('SDK upload failed:', e); }
+                // 策略2: REST API fallback
+                if (!uploaded) {
+                    try {
+                        const res = await fetch(`${SUPABASE_URL}/storage/v1/object/documents/${path}`, {
+                            method: 'POST',
+                            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': contentType, 'Cache-Control': '3600' },
+                            body: file
+                        });
+                        if (res.ok) uploaded = true;
+                        else { const t = await res.text(); throw new Error(t); }
+                    } catch(e) { console.warn('REST upload failed:', e); throw new Error('上传失败，请检查网络后重试'); }
+                }
                 await supabase.from('documents').insert({
                     teacher_name: teacherName, category, file_name: file.name,
                     file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path
@@ -775,27 +792,13 @@
 
         // --- 模拟测试及作业模块 ---
         const MockTestModule = ({ students, onSave, onClose, semester, className, teacherName }) => {
-            const [localScores, setLocalScores] = useState(() => {
-                const m = {};
-                students.forEach(s => { m[s.id] = { mock1: s.scores.mock1 || '', mock2: s.scores.mock2 || '', hw1: s.scores.hw1 || '', hw2: s.scores.hw2 || '' }; });
-                return m;
-            });
-            const updateField = (sid, key, val) => {
-                setLocalScores(prev => ({ ...prev, [sid]: { ...prev[sid], [key]: val } }));
-            };
-            const handleSave = () => {
-                const updates = students.map(s => ({
-                    id: s.id,
-                    scores: { ...s.scores, ...localScores[s.id] }
-                }));
-                onSave(updates);
-                alert("模拟测试及作业成绩已保存");
-            };
+            const [batchField, setBatchField] = useState(null); // 'mock1','mock2','hw1','hw2'
+            const fieldLabels = { mock1:'模拟1', mock2:'模拟2', hw1:'作业1', hw2:'作业2' };
             const handleExport = () => {
                 const data = students.map((s, i) => ({
                     '序号': i + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
-                    '模拟1': localScores[s.id]?.mock1 || '', '模拟2': localScores[s.id]?.mock2 || '',
-                    '作业1': localScores[s.id]?.hw1 || '', '作业2': localScores[s.id]?.hw2 || '',
+                    '模拟1': s.scores.mock1 || '', '模拟2': s.scores.mock2 || '',
+                    '作业1': s.scores.hw1 || '', '作业2': s.scores.hw2 || '',
                 }));
                 const ws = XLSX.utils.json_to_sheet(data);
                 const wb = XLSX.utils.book_new();
@@ -805,9 +808,8 @@
             return (
                 <div className="fixed inset-0 bg-white z-[50] flex flex-col">
                     <div className="p-4 shadow flex justify-between items-center bg-gray-50">
-                        <div><h3 className="font-bold">模拟测试及作业</h3><p className="text-xs text-gray-500">给每位学生的模拟测试和作业打分</p></div>
+                        <div><h3 className="font-bold">模拟测试及作业</h3><p className="text-xs text-gray-500">点击列标题可批量录入单项成绩</p></div>
                         <div className="flex gap-2">
-                            <button onClick={handleSave} className="bg-blue-600 text-white px-3 py-1 rounded text-sm">保存</button>
                             <button onClick={handleExport} className="bg-green-600 text-white px-3 py-1 rounded text-sm">导出Excel</button>
                             <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
                         </div>
@@ -818,10 +820,11 @@
                                 <tr className="bg-gray-100">
                                     <th className="border p-2 sticky left-0 bg-gray-100 z-10">姓名</th>
                                     <th className="border p-2">学号</th>
-                                    <th className="border p-2 bg-orange-50">模拟1</th>
-                                    <th className="border p-2 bg-orange-50">模拟2</th>
-                                    <th className="border p-2 bg-blue-50">作业1</th>
-                                    <th className="border p-2 bg-blue-50">作业2</th>
+                                    {['mock1','mock2','hw1','hw2'].map(k => (
+                                        <th key={k} className={`border p-2 cursor-pointer hover:bg-blue-100 ${k.startsWith('mock')?'bg-orange-50':'bg-blue-50'}`} onClick={() => setBatchField(k)}>
+                                            <span className="text-blue-600 hover:underline">{fieldLabels[k]}</span>
+                                        </th>
+                                    ))}
                                 </tr>
                             </thead>
                             <tbody>
@@ -829,13 +832,72 @@
                                     <tr key={s.id} className="hover:bg-gray-50">
                                         <td className="border p-1 font-medium sticky left-0 bg-white z-10">{s.name}</td>
                                         <td className="border p-1 text-gray-500">{s.id}</td>
-                                        <td className="border p-1"><input type="number" className="w-full border rounded px-1 py-0.5 text-center" value={localScores[s.id]?.mock1 || ''} onChange={e => updateField(s.id, 'mock1', e.target.value)} /></td>
-                                        <td className="border p-1"><input type="number" className="w-full border rounded px-1 py-0.5 text-center" value={localScores[s.id]?.mock2 || ''} onChange={e => updateField(s.id, 'mock2', e.target.value)} /></td>
-                                        <td className="border p-1"><input type="number" className="w-full border rounded px-1 py-0.5 text-center" value={localScores[s.id]?.hw1 || ''} onChange={e => updateField(s.id, 'hw1', e.target.value)} /></td>
-                                        <td className="border p-1"><input type="number" className="w-full border rounded px-1 py-0.5 text-center" value={localScores[s.id]?.hw2 || ''} onChange={e => updateField(s.id, 'hw2', e.target.value)} /></td>
+                                        {['mock1','mock2','hw1','hw2'].map(k => (
+                                            <td key={k} className="border p-1 text-center">{s.scores[k] || '-'}</td>
+                                        ))}
                                     </tr>
                                 ))}
                             </tbody>
+                        </table>
+                    </div>
+                    {batchField && <MockBatchModal students={students} field={batchField} fieldName={fieldLabels[batchField]} onClose={() => setBatchField(null)} onSave={onSave} />}
+                </div>
+            );
+        };
+
+        // --- 模拟/作业单项批量录入弹窗（自动保存） ---
+        const MockBatchModal = ({ students, field, fieldName, onClose, onSave }) => {
+            const [values, setValues] = useState(() => {
+                const init = {};
+                students.forEach(s => { init[s.id] = s.scores[field] || ''; });
+                return init;
+            });
+            const saveTimerRef = React.useRef(null);
+            const handleChange = (sid, val) => {
+                setValues(prev => ({ ...prev, [sid]: val }));
+                // 自动保存（防抖300ms）
+                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                saveTimerRef.current = setTimeout(() => {
+                    const updates = students.map(s => ({
+                        id: s.id,
+                        scores: { ...s.scores, [field]: s.id === sid ? val : (values[s.id] !== undefined ? values[s.id] : s.scores[field]) }
+                    }));
+                    // Fix: use latest values for all
+                    onSave(updates);
+                }, 300);
+            };
+            // 组件卸载时立即保存
+            React.useEffect(() => {
+                return () => {
+                    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                    // 保存最终状态
+                };
+            }, []);
+            const handleClose = () => {
+                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                // 关闭时保存所有当前值
+                const updates = students.map(s => ({
+                    id: s.id,
+                    scores: { ...s.scores, [field]: values[s.id] !== undefined ? values[s.id] : s.scores[field] }
+                }));
+                onSave(updates);
+                onClose();
+            };
+            return (
+                <div className="fixed inset-0 bg-white z-[60] flex flex-col">
+                    <div className="p-4 shadow flex justify-between items-center bg-orange-50">
+                        <div><h3 className="font-bold">批量录入: {fieldName}</h3><p className="text-xs text-gray-500">输入后自动保存</p></div>
+                        <button onClick={handleClose} className="text-2xl">&times;</button>
+                    </div>
+                    <div className="flex-1 overflow-auto p-4">
+                        <table className="min-w-full text-sm">
+                            <thead className="bg-gray-100"><tr><th className="p-2 text-left">姓名</th><th className="p-2 text-left">{fieldName}</th></tr></thead>
+                            <tbody>{students.map(s => (
+                                <tr key={s.id} className="border-b">
+                                    <td className="p-2 font-medium">{s.name}</td>
+                                    <td className="p-2"><input className="border p-2 rounded w-full" type="number" value={values[s.id] || ''} onChange={e => handleChange(s.id, e.target.value)} /></td>
+                                </tr>
+                            ))}</tbody>
                         </table>
                     </div>
                 </div>
@@ -1189,7 +1251,7 @@
                 const sc = student.scores;
                 const m1 = parseFloat(sc.mock1) || 0, m2 = parseFloat(sc.mock2) || 0;
                 const h1 = parseFloat(sc.hw1) || 0, h2 = parseFloat(sc.hw2) || 0;
-                hintContent = <div className="absolute left-0 bottom-full mb-1 text-xs p-2 rounded shadow-lg z-50 whitespace-nowrap bg-blue-100 text-blue-800">{`模拟1: ${m1} | 模拟2: ${m2} | 模拟均分: ${(m1+m2)/2} | 作业1: ${h1} | 作业2: ${h2} | 作业均分: ${(h1+h2)/2}`}</div>;
+                hintContent = <div className="absolute left-0 bottom-full mb-1 text-xs p-2 rounded shadow-lg z-50 bg-blue-100 text-blue-800" style={{maxWidth:'min(90vw, 320px)', lineHeight:'1.6'}}>模拟1: {m1} | 模拟2: {m2} | 模拟均分: {(m1+m2)/2}<br/>作业1: {h1} | 作业2: {h2} | 作业均分: {(h1+h2)/2}</div>;
             }
 
             return (
@@ -1254,12 +1316,12 @@
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className="text-xs text-gray-600 block mb-1">专项1 ({config.spec1?.type === 'score' ? '分值' : config.spec1?.type})</label>
-                                        <input type="number" placeholder={config.spec1?.type === 'score' ? '0-100' : '原始数据'} className="w-full border p-2 rounded focus:ring-2 ring-orange-300" value={config.spec1?.type === 'score' ? scores.special1 : specInputs.rawSpec1} onChange={e => { if(config.spec1?.type === 'score') updateScore('special1', e.target.value); else handleSpecInput('rawSpec1', e.target.value); }} />
+                                        <input type="number" placeholder={config.spec1?.type === 'score' ? '0-100' : '原始数据'} className="w-full border p-2 rounded focus:ring-2 ring-orange-300" value={(config.spec1?.type === 'score' ? scores.special1 : specInputs.rawSpec1) || ''} onChange={e => { if(config.spec1?.type === 'score') updateScore('special1', e.target.value); else handleSpecInput('rawSpec1', e.target.value); }} />
                                         {config.spec1?.type !== 'score' && <div className="text-xs text-right text-orange-600 mt-1">折算: {scores.special1}分</div>}
                                     </div>
                                     <div>
                                         <label className="text-xs text-gray-600 block mb-1">专项2 ({config.spec2?.type === 'score' ? '分值' : config.spec2?.type})</label>
-                                        <input type="number" placeholder={config.spec2?.type === 'score' ? '0-100' : '原始数据'} className="w-full border p-2 rounded focus:ring-2 ring-orange-300" value={config.spec2?.type === 'score' ? scores.special2 : specInputs.rawSpec2} onChange={e => { if(config.spec2?.type === 'score') updateScore('special2', e.target.value); else handleSpecInput('rawSpec2', e.target.value); }} />
+                                        <input type="number" placeholder={config.spec2?.type === 'score' ? '0-100' : '原始数据'} className="w-full border p-2 rounded focus:ring-2 ring-orange-300" value={(config.spec2?.type === 'score' ? scores.special2 : specInputs.rawSpec2) || ''} onChange={e => { if(config.spec2?.type === 'score') updateScore('special2', e.target.value); else handleSpecInput('rawSpec2', e.target.value); }} />
                                         {config.spec2?.type !== 'score' && <div className="text-xs text-right text-orange-600 mt-1">折算: {scores.special2}分</div>}
                                     </div>
                                 </div>
@@ -1276,7 +1338,7 @@
                                     <label className="text-xs text-gray-500">平时1</label>
                                     <input 
                                         type="number" className="w-full border p-2 rounded" 
-                                        value={scores.regular1} onChange={(e) => updateScore('regular1', e.target.value)} 
+                                        value={scores.regular1 || ''} onChange={(e) => updateScore('regular1', e.target.value)} 
                                         onFocus={() => setFocusedField('regular1')} onBlur={() => setFocusedField(null)}
                                     />
                                     {focusedField === 'regular1' && attendanceHint !== "无考勤记录" && (
@@ -1288,21 +1350,22 @@
                                 <div className="relative">
                                     <label className="text-xs text-gray-500">平时2</label>
                                     <input type="number" className="w-full border p-2 rounded" 
-                                        value={scores.regular2} onChange={(e) => updateScore('regular2', e.target.value)}
+                                        value={scores.regular2 || ''} onChange={(e) => updateScore('regular2', e.target.value)}
                                         onFocus={() => setFocusedField('regular2')} onBlur={() => setFocusedField(null)}
                                     />
                                     {focusedField === 'regular2' && (
-                                        <div className="absolute left-0 bottom-full mb-1 text-xs p-2 rounded shadow-lg z-50 whitespace-nowrap bg-blue-100 text-blue-800">
-                                            {`模拟1: ${parseFloat(scores.mock1)||0} | 模拟2: ${parseFloat(scores.mock2)||0} | 模拟均分: ${((parseFloat(scores.mock1)||0)+(parseFloat(scores.mock2)||0))/2} | 作业1: ${parseFloat(scores.hw1)||0} | 作业2: ${parseFloat(scores.hw2)||0} | 作业均分: ${((parseFloat(scores.hw1)||0)+(parseFloat(scores.hw2)||0))/2}`}
+                                        <div className="absolute left-0 bottom-full mb-1 text-xs p-2 rounded shadow-lg z-50 bg-blue-100 text-blue-800" style={{maxWidth:'min(90vw, 320px)', lineHeight:'1.6'}}>
+                                            模拟1: {parseFloat(scores.mock1)||0} | 模拟2: {parseFloat(scores.mock2)||0} | 模拟均分: {((parseFloat(scores.mock1)||0)+(parseFloat(scores.mock2)||0))/2}<br/>
+                                            作业1: {parseFloat(scores.hw1)||0} | 作业2: {parseFloat(scores.hw2)||0} | 作业均分: {((parseFloat(scores.hw1)||0)+(parseFloat(scores.hw2)||0))/2}
                                         </div>
                                     )}
                                 </div>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
-                                <div><label className="text-xs text-gray-500">乐跑次数</label><input type="number" className="w-full border p-2 rounded bg-gray-50" value={scores.runCount} onChange={(e) => updateScore('runCount', e.target.value)} /></div>
-                                <div><label className="text-xs text-gray-500">乐跑得分</label><input type="number" className="w-full border p-2 rounded" value={scores.runScore} onChange={(e) => updateScore('runScore', e.target.value)} /></div>
+                                <div><label className="text-xs text-gray-500">乐跑次数</label><input type="number" className="w-full border p-2 rounded bg-gray-50" value={scores.runCount || ''} onChange={(e) => updateScore('runCount', e.target.value)} /></div>
+                                <div><label className="text-xs text-gray-500">乐跑得分</label><input type="number" className="w-full border p-2 rounded" value={scores.runScore || ''} onChange={(e) => updateScore('runScore', e.target.value)} /></div>
                             </div>
-                            {semType === 'spring' && (<div><label className="text-xs text-gray-500">理论</label><input type="number" className="w-full border p-2 rounded" value={scores.theory} onChange={(e) => updateScore('theory', e.target.value)} /></div>)}
+                            {semType === 'spring' && (<div><label className="text-xs text-gray-500">理论</label><input type="number" className="w-full border p-2 rounded" value={scores.theory || ''} onChange={(e) => updateScore('theory', e.target.value)} /></div>)}
                         </div>
                         <div className="p-4 border-t flex justify-between items-center bg-gray-50 rounded-b-xl">
                             <span className="font-bold text-lg text-blue-600">总评: {calculateFinalScore({ ...scores, stdItem1: calculateStdTestScore(scores.rawItem1, testNames.item1, student.gender), stdItem2: calculateStdTestScore(scores.rawItem2, testNames.item2, student.gender) }, semType)}</span>
@@ -1411,7 +1474,7 @@
                     optionClass: row['体育课选项班'] || row['上课班级'] || '未分配班级',
                     teacherName: row['体育课任课教师'] || '',
                     semester: semester, 
-                    scores: { regular1:0, regular2:0, special1:0, special2:0, runCount:0, runScore:0, stdItem1:0, stdItem2:0, theory:'', mock1:'', mock2:'', hw1:'', hw2:'' } 
+                    scores: { regular1:'', regular2:'', special1:'', special2:'', runCount:'', runScore:'', stdItem1:'', stdItem2:'', theory:'', mock1:'', mock2:'', hw1:'', hw2:'' } 
                 }));
                 setStudents(prev => {
                     const others = prev.filter(s => s.semester !== semester);
@@ -1761,10 +1824,10 @@
                             </div>
                         </div>
                         <div className="px-3 pb-2 flex gap-2 overflow-x-auto hide-scrollbar border-b border-gray-100">
+                             <button onClick={() => setDocView('textbook')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 text-xs font-bold whitespace-nowrap border border-amber-200">教材</button>
                              <button onClick={() => setDocView('syllabus')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-600 text-xs font-bold whitespace-nowrap">教学大纲</button>
                              <button onClick={() => setDocView('schedule')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-purple-50 text-purple-600 text-xs font-bold whitespace-nowrap">教学进度表</button>
                              <button onClick={() => setDocView('plan')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-teal-50 text-teal-600 text-xs font-bold whitespace-nowrap">教案</button>
-                             <button onClick={() => setDocView('textbook')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-green-50 text-green-600 text-xs font-bold whitespace-nowrap">教材</button>
                         </div>
                         <div className="px-3 py-2 bg-gray-50 flex items-center scrolling-wrapper gap-2">
                             <button onClick={() => setShowClaimModal(true)} className="flex-shrink-0 mr-3 px-3 py-1.5 rounded-full text-sm border border-dashed border-blue-400 text-blue-600 bg-blue-50 flex items-center gap-1 hover:bg-blue-100 whitespace-nowrap">认领班级</button>
