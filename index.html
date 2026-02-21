@@ -22,7 +22,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"></script>
     <script src="https://unpkg.com/lucide@0.344.0"></script>
     <!-- Supabase JS SDK -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
     <script>
@@ -145,29 +145,51 @@
                 const path = `${category}/${safeName}`;
                 const mimeMap = { pdf:'application/pdf', doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ppt:'application/vnd.ms-powerpoint', pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation', xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif' };
                 const contentType = mimeMap[ext] || file.type || 'application/octet-stream';
-                // 策略1: SDK upload
-                let uploaded = false;
+                const errors = [];
+
+                // 策略1：SDK 上传（原始方式，之前可用）
                 try {
-                    const { error: uploadErr } = await supabase.storage.from('documents').upload(path, file, { contentType, cacheControl: '3600' });
-                    if (!uploadErr) uploaded = true;
-                    else console.warn('SDK upload error:', uploadErr);
-                } catch(e) { console.warn('SDK upload failed:', e); }
-                // 策略2: REST API fallback
-                if (!uploaded) {
-                    try {
-                        const res = await fetch(`${SUPABASE_URL}/storage/v1/object/documents/${path}`, {
-                            method: 'POST',
-                            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': contentType, 'Cache-Control': '3600' },
-                            body: file
-                        });
-                        if (res.ok) uploaded = true;
-                        else { const t = await res.text(); throw new Error(t); }
-                    } catch(e) { console.warn('REST upload failed:', e); throw new Error('上传失败，请检查网络后重试'); }
-                }
-                await supabase.from('documents').insert({
-                    teacher_name: teacherName, category, file_name: file.name,
-                    file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path
-                });
+                    const { data, error } = await supabase.storage.from('documents').upload(path, file, { contentType, cacheControl: '3600', upsert: false });
+                    if (!error && data) {
+                        await supabase.from('documents').insert({ teacher_name: teacherName, category, file_name: file.name, file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path });
+                        return;
+                    }
+                    errors.push('SDK: ' + (error?.message || error?.statusCode || JSON.stringify(error)));
+                } catch(e) { errors.push('SDK异常: ' + e.message); }
+
+                // 策略2：XHR 上传（绕过 fetch 限制）
+                try {
+                    await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', `${SUPABASE_URL}/storage/v1/object/documents/${path}`);
+                        xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY);
+                        xhr.setRequestHeader('Authorization', 'Bearer ' + SUPABASE_ANON_KEY);
+                        xhr.setRequestHeader('Content-Type', contentType);
+                        xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error('XHR ' + xhr.status + ': ' + xhr.responseText));
+                        xhr.onerror = () => reject(new Error('XHR网络错误'));
+                        xhr.send(file);
+                    });
+                    await supabase.from('documents').insert({ teacher_name: teacherName, category, file_name: file.name, file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path });
+                    return;
+                } catch(e) { errors.push('XHR: ' + e.message); }
+
+                // 策略3：fetch + FormData
+                try {
+                    const fd = new FormData(); fd.append('file', file, safeName);
+                    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/documents/${path}`, {
+                        method: 'POST', headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }, body: fd
+                    });
+                    if (res.ok) {
+                        await supabase.from('documents').insert({ teacher_name: teacherName, category, file_name: file.name, file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path });
+                        return;
+                    }
+                    errors.push('REST: ' + res.status + ' ' + (await res.text()));
+                } catch(e) { errors.push('REST: ' + e.message); }
+
+                // 全部失败 - 显示详细诊断信息
+                const diagMsg = errors.join('\n');
+                console.error('上传诊断:\n' + diagMsg);
+                throw new Error(diagMsg);
             },
             async deleteDoc(id, storagePath) {
                 await supabase.storage.from('documents').remove([storagePath]);
@@ -488,7 +510,7 @@
                 if (file.size > 50 * 1024 * 1024) { alert("文件过大！最大 50MB。"); return; }
                 setUploading(true);
                 try { await DB.uploadDoc(teacherName, category, file); setDocs(await DB.getDocs(teacherName, category)); alert("上传成功！"); }
-                catch (err) { console.error(err); alert("上传失败：" + err.message); }
+                catch (err) { console.error('上传详细错误:', err); alert("上传失败（详细信息）：\n\n" + err.message + "\n\n如遇到此问题，请截图发给管理员。\n可能需要检查 Supabase Storage 的 RLS 策略。"); }
                 setUploading(false); e.target.value = '';
             };
             const handleDelete = async (doc) => { if (!confirm("确定删除？")) return; await DB.deleteDoc(doc.id, doc.storagePath); setDocs(docs.filter(d => d.id !== doc.id)); };
@@ -664,7 +686,7 @@
                 if (file.size > 50 * 1024 * 1024) { alert("文件过大！最大 50MB。"); return; }
                 setUploading(true);
                 try { await DB.uploadDoc('__admin__', 'textbook', file); await loadDocs(); alert("上传成功！"); }
-                catch (err) { console.error(err); alert("上传失败：" + err.message); }
+                catch (err) { console.error('教材上传详细错误:', err); alert("上传失败（详细信息）：\n\n" + err.message + "\n\n请检查：\n1. Supabase Storage 桶 'documents' 是否存在\n2. Storage RLS 是否允许 INSERT\n3. 打开浏览器控制台 (F12) 查看详细日志"); }
                 setUploading(false); e.target.value = '';
             };
             const handleDelete = async (doc) => { if (!confirm("确定删除教材 \"" + doc.name + "\" ？")) return; await DB.deleteDoc(doc.id, doc.storagePath); setDocs(docs.filter(d => d.id !== doc.id)); };
@@ -689,6 +711,32 @@
                         <input type="file" onChange={handleUpload} disabled={uploading} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-600 file:text-white hover:file:bg-green-700"/>
                         {uploading && <p className="text-xs text-green-600 mt-2 animate-pulse">正在上传...</p>}
                         <p className="text-xs text-green-500 mt-2">* 上传的教材将对所有教师可见（最大 50MB）</p>
+                        <button onClick={async () => {
+                            let msg = '=== Storage 诊断 ===\n';
+                            try {
+                                msg += 'SDK版本: ' + (window.supabase?.version || 'unknown') + '\n';
+                                msg += 'Key前缀: ' + SUPABASE_ANON_KEY.substring(0, 16) + '...\n';
+                                // 测试1：列出桶
+                                try {
+                                    const { data: buckets, error: bErr } = await supabase.storage.listBuckets();
+                                    msg += '桶列表: ' + (bErr ? '错误-'+bErr.message : JSON.stringify((buckets||[]).map(b=>b.name))) + '\n';
+                                } catch(e) { msg += '桶列表异常: ' + e.message + '\n'; }
+                                // 测试2：列出documents桶内容
+                                try {
+                                    const { data: files, error: fErr } = await supabase.storage.from('documents').list('textbook', { limit: 3 });
+                                    msg += 'textbook目录: ' + (fErr ? '错误-'+fErr.message : (files||[]).length + '个文件') + '\n';
+                                } catch(e) { msg += '目录列表异常: ' + e.message + '\n'; }
+                                // 测试3：试上传一个1字节文件
+                                try {
+                                    const testBlob = new Blob(['x'], {type:'text/plain'});
+                                    const testPath = 'textbook/_diag_test_' + Date.now() + '.txt';
+                                    const { data, error: uErr } = await supabase.storage.from('documents').upload(testPath, testBlob, {contentType:'text/plain'});
+                                    if (uErr) { msg += '测试上传: 失败-' + (uErr.message || JSON.stringify(uErr)) + '\n'; }
+                                    else { msg += '测试上传: 成功! ✅\n'; await supabase.storage.from('documents').remove([testPath]); }
+                                } catch(e) { msg += '测试上传异常: ' + e.message + '\n'; }
+                            } catch(e) { msg += '诊断异常: ' + e.message + '\n'; }
+                            alert(msg);
+                        }} className="mt-2 text-xs text-gray-400 underline hover:text-gray-600">上传有问题？点击诊断</button>
                     </div>
                     <div className="flex-1 overflow-y-auto">
                         {loading ? <div className="text-center text-gray-400 mt-10">加载中...</div> : docs.length === 0 ? <div className="text-center text-gray-400 mt-10">暂无教材</div> : (
@@ -852,35 +900,36 @@
                 students.forEach(s => { init[s.id] = s.scores[field] || ''; });
                 return init;
             });
-            const saveTimerRef = React.useRef(null);
+            const mockUserChanged = React.useRef(false);
+            const valuesRef = React.useRef(values);
+            valuesRef.current = values;
+
             const handleChange = (sid, val) => {
+                mockUserChanged.current = true;
                 setValues(prev => ({ ...prev, [sid]: val }));
-                // 自动保存（防抖300ms）
-                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-                saveTimerRef.current = setTimeout(() => {
-                    const updates = students.map(s => ({
-                        id: s.id,
-                        scores: { ...s.scores, [field]: s.id === sid ? val : (values[s.id] !== undefined ? values[s.id] : s.scores[field]) }
-                    }));
-                    // Fix: use latest values for all
-                    onSave(updates);
-                }, 300);
             };
-            // 组件卸载时立即保存
-            React.useEffect(() => {
-                return () => {
-                    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-                    // 保存最终状态
-                };
-            }, []);
-            const handleClose = () => {
-                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-                // 关闭时保存所有当前值
+
+            const doSave = React.useCallback(() => {
+                const v = valuesRef.current;
                 const updates = students.map(s => ({
                     id: s.id,
-                    scores: { ...s.scores, [field]: values[s.id] !== undefined ? values[s.id] : s.scores[field] }
+                    scores: { ...s.scores, [field]: v[s.id] !== undefined ? v[s.id] : s.scores[field] }
                 }));
                 onSave(updates);
+            }, [students, field, onSave]);
+
+            // 自动保存（防抖300ms）- 仅用户输入触发
+            const saveTimerRef = React.useRef(null);
+            useEffect(() => {
+                if (!mockUserChanged.current) return;
+                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                saveTimerRef.current = setTimeout(() => { doSave(); mockUserChanged.current = false; }, 300);
+                return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+            }, [values, doSave]);
+
+            const handleClose = () => {
+                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                doSave();
                 onClose();
             };
             return (
@@ -918,10 +967,13 @@
                 setRecords(initRecs);
             }, [date, students]);
 
-            const handleStatusChange = (sid, status) => setRecords(prev => ({ ...prev, [sid]: { ...prev[sid], status } }));
-            const handleRemarkChange = (sid, remark) => setRecords(prev => ({ ...prev, [sid]: { ...prev[sid], remark } }));
+            const attendUserChanged = React.useRef(false);
+            const handleStatusChange = (sid, status) => { attendUserChanged.current = true; setRecords(prev => ({ ...prev, [sid]: { ...prev[sid], status } })); };
+            const handleRemarkChange = (sid, remark) => { attendUserChanged.current = true; setRecords(prev => ({ ...prev, [sid]: { ...prev[sid], remark } })); };
 
-            const saveAttendance = () => {
+            // 自动保存考勤（防抖500ms）- 仅用户操作触发
+            const attendSaveTimer = React.useRef(null);
+            const saveAttendance = React.useCallback(() => {
                 const updates = students.map(s => {
                     const newRec = { date, ...records[s.id] };
                     const prevAtt = s.attendance || [];
@@ -929,8 +981,13 @@
                     return { id: s.id, attendance: [...filtered, newRec] };
                 });
                 onSave(updates);
-                alert("考勤已保存");
-            };
+            }, [students, records, date, onSave]);
+            useEffect(() => {
+                if (!attendUserChanged.current) return;
+                if (attendSaveTimer.current) clearTimeout(attendSaveTimer.current);
+                attendSaveTimer.current = setTimeout(() => { saveAttendance(); attendUserChanged.current = false; }, 500);
+                return () => { if (attendSaveTimer.current) clearTimeout(attendSaveTimer.current); };
+            }, [records, saveAttendance]);
 
             const exportAttendance = () => {
                 const allDates = new Set();
@@ -1009,7 +1066,7 @@
                         ))}
                     </div>
                     <div className="pt-4 border-t mt-2">
-                        <button onClick={saveAttendance} className="w-full bg-blue-600 text-white py-3 rounded font-bold shadow">保存考勤</button>
+                        <p className="text-center text-xs text-gray-400">考勤操作后自动保存</p>
                     </div>
                 </div>
             );
@@ -1017,33 +1074,49 @@
 
         const BatchStdEntryModal = ({ students, trialIndex, itemKey, itemName, onClose, onSave }) => {
             const [values, setValues] = useState({});
+            const batchStdUserChanged = React.useRef(false);
             useEffect(() => {
                 const init = {};
                 students.forEach(s => { init[s.id] = (s.stdTestRecords?.[itemKey] || [])[trialIndex] || ""; });
                 setValues(init);
             }, [students, trialIndex, itemKey]);
-            const handleChange = (sid, val) => setValues(prev => ({ ...prev, [sid]: val }));
-            const handleSave = () => {
+            const handleChange = (sid, val) => { batchStdUserChanged.current = true; setValues(prev => ({ ...prev, [sid]: val })); };
+            
+            const doSave = React.useCallback((vals) => {
                 const updates = students.map(s => {
                     const currentRecords = s.stdTestRecords?.[itemKey] || ["", "", ""];
                     const newRecords = [...currentRecords];
-                    newRecords[trialIndex] = values[s.id];
+                    newRecords[trialIndex] = vals[s.id];
                     return { id: s.id, [itemKey]: newRecords };
                 });
                 onSave(updates, itemKey);
+            }, [students, itemKey, trialIndex, onSave]);
+
+            // 自动保存（防抖500ms）- 仅用户输入触发
+            const saveTimer = React.useRef(null);
+            useEffect(() => {
+                if (!batchStdUserChanged.current) return;
+                if (saveTimer.current) clearTimeout(saveTimer.current);
+                saveTimer.current = setTimeout(() => { doSave(values); batchStdUserChanged.current = false; }, 500);
+                return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+            }, [values, doSave]);
+
+            const handleClose = () => {
+                if (saveTimer.current) clearTimeout(saveTimer.current);
+                doSave(values);
                 onClose();
             };
+
             return (
                 <div className="fixed inset-0 bg-white z-[60] flex flex-col">
                     <div className="p-4 shadow flex justify-between items-center bg-blue-50">
-                        <div><h3 className="font-bold">批量录入: {itemName}</h3><p className="text-xs text-gray-500">第 {trialIndex + 1} 次测试</p></div>
-                        <button onClick={onClose} className="text-2xl">&times;</button>
+                        <div><h3 className="font-bold">批量录入: {itemName}</h3><p className="text-xs text-gray-500">第 {trialIndex + 1} 次测试 · 输入后自动保存</p></div>
+                        <button onClick={handleClose} className="text-2xl">&times;</button>
                     </div>
                     <div className="flex-1 overflow-auto p-4">
                         <table className="min-w-full text-sm"><thead className="bg-gray-100"><tr><th className="p-2 text-left">姓名</th><th className="p-2 text-left">成绩</th></tr></thead>
                         <tbody>{students.map(s => (<tr key={s.id} className="border-b"><td className="p-2">{s.name}</td><td className="p-2"><input className="border p-2 rounded w-full" value={values[s.id] || ''} onChange={e => handleChange(s.id, e.target.value)} type="text" inputMode="decimal"/></td></tr>))}</tbody></table>
                     </div>
-                    <div className="p-4 border-t"><button onClick={handleSave} className="w-full bg-blue-600 text-white py-3 rounded font-bold">确认保存</button></div>
                 </div>
             );
         };
@@ -1060,7 +1133,9 @@
                 setLocalRecs(init);
             }, [students]);
 
+            const stdUserChanged = React.useRef(false);
             const handleChange = (sid, itemKey, idx, val) => {
+                stdUserChanged.current = true;
                 setLocalRecs(prev => {
                     const newList = [...prev[sid][itemKey]];
                     newList[idx] = val;
@@ -1069,6 +1144,7 @@
             };
 
             const handleBatchSave = (updates, itemKey) => {
+                stdUserChanged.current = true;
                 setLocalRecs(prev => {
                     const next = { ...prev };
                     updates.forEach(u => {
@@ -1080,18 +1156,33 @@
                 });
             };
 
-            const handleSave = () => {
+            // 自动保存统考记录（防抖800ms）+ 同步最优成绩 - 仅用户操作触发
+            const stdSaveTimer = React.useRef(null);
+            const syncAndSave = React.useCallback((recs) => {
                 const updates = students.map(s => {
-                    const rec = localRecs[s.id];
+                    const rec = recs[s.id];
+                    if (!rec) return null;
                     const info = getTestItemsName(semType, s.gender);
                     const best1 = getBestRecord(rec.item1, info.type1);
                     const best2 = getBestRecord(rec.item2, info.type2);
                     const score1 = calculateStdTestScore(best1, info.item1, s.gender);
                     const score2 = calculateStdTestScore(best2, info.item2, s.gender);
                     return { id: s.id, stdTestRecords: rec, scores: { ...s.scores, rawItem1: best1, rawItem2: best2, stdItem1: score1 !== null ? score1 : 0, stdItem2: score2 !== null ? score2 : 0 } };
-                });
-                onSave(updates);
-                alert("记录已保存，最好成绩和分数已同步至总评计算");
+                }).filter(Boolean);
+                if (updates.length > 0) onSave(updates);
+            }, [students, semType, onSave]);
+
+            useEffect(() => {
+                if (!stdUserChanged.current) return;
+                if (Object.keys(localRecs).length === 0) return;
+                if (stdSaveTimer.current) clearTimeout(stdSaveTimer.current);
+                stdSaveTimer.current = setTimeout(() => { syncAndSave(localRecs); stdUserChanged.current = false; }, 800);
+                return () => { if (stdSaveTimer.current) clearTimeout(stdSaveTimer.current); };
+            }, [localRecs, syncAndSave]);
+
+            const handleClose = () => {
+                if (stdSaveTimer.current) clearTimeout(stdSaveTimer.current);
+                syncAndSave(localRecs);
                 onClose();
             };
 
@@ -1118,10 +1209,10 @@
             return (
                 <div className="fixed inset-0 bg-white z-[50] flex flex-col">
                     <div className="p-4 shadow flex justify-between items-center bg-gray-50">
-                        <div><h3 className="font-bold">统考详细记录</h3><p className="text-xs text-gray-500">自动选取最优成绩同步</p></div>
+                        <div><h3 className="font-bold">统考详细记录</h3><p className="text-xs text-gray-500">自动选取最优成绩 · 输入后自动保存</p></div>
                         <div className="flex gap-2">
                             <button onClick={handleExportStd} className="bg-green-600 text-white px-3 py-1 rounded text-sm">导出Excel</button>
-                            <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
+                            <button onClick={handleClose} className="text-gray-500 text-2xl">&times;</button>
                         </div>
                     </div>
                     <div className="flex-1 overflow-auto p-2">
@@ -1154,7 +1245,6 @@
                             </tbody>
                         </table>
                     </div>
-                    <div className="p-4 border-t"><button onClick={handleSave} className="w-full bg-blue-600 text-white py-3 rounded font-bold">保存并同步</button></div>
                     {batchModalInfo && <BatchStdEntryModal students={students} {...batchModalInfo} onClose={() => setBatchModalInfo(null)} onSave={handleBatchSave}/>}
                 </div>
             );
