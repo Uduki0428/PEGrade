@@ -117,11 +117,41 @@
                     scores: s.scores, attendance: s.attendance || [], std_test_records: s.stdTestRecords || {},
                     updated_at: new Date().toISOString()
                 }));
+                
+                // 策略1：批量 upsert（需要 UNIQUE 约束 on (id, semester)）
+                let batchOk = true;
                 for (let i = 0; i < rows.length; i += 500) {
                     const chunk = rows.slice(i, i + 500);
                     const { error } = await supabase.from('students').upsert(chunk, { onConflict: 'id,semester' });
-                    if (error) console.error('saveStudents chunk:', error);
+                    if (error) {
+                        console.warn('批量upsert失败:', error.message, '- 切换兜底方案');
+                        batchOk = false;
+                        break;
+                    }
                 }
+                if (batchOk) return;
+                
+                // 策略2：按学期 delete + insert（绕过所有约束问题）
+                const semesters = [...new Set(rows.map(r => r.semester))];
+                for (const sem of semesters) {
+                    const semRows = rows.filter(r => r.semester === sem);
+                    // 删除该学期所有数据
+                    const { error: delErr } = await supabase.from('students').delete().eq('semester', sem);
+                    if (delErr) {
+                        console.error('删除学期数据失败:', delErr);
+                        throw new Error('删除旧数据失败: ' + delErr.message);
+                    }
+                    // 分批插入
+                    for (let i = 0; i < semRows.length; i += 500) {
+                        const chunk = semRows.slice(i, i + 500);
+                        const { error: insErr } = await supabase.from('students').insert(chunk);
+                        if (insErr) {
+                            console.error('插入数据失败:', insErr);
+                            throw new Error('插入数据失败: ' + insErr.message);
+                        }
+                    }
+                }
+                console.log('兜底保存完成（delete+insert）');
             },
             async deleteStudent(id, semester) {
                 await supabase.from('students').delete().eq('id', id).eq('semester', semester);
@@ -133,11 +163,15 @@
             async getDocs(teacherName, category) {
                 const { data, error } = await supabase.from('documents').select('*').eq('teacher_name', teacherName).eq('category', category).order('created_at', { ascending: false });
                 if (error) return [];
-                return data.map(d => ({
-                    id: d.id, name: d.file_name, date: new Date(d.created_at).toLocaleDateString(),
-                    size: d.file_size, type: d.file_type, storagePath: d.storage_path,
-                    url: `${SUPABASE_URL}/storage/v1/object/public/documents/${d.storage_path}`
-                }));
+                return data.map(d => {
+                    const isInline = d.storage_path && d.storage_path.startsWith('data:');
+                    return {
+                        id: d.id, name: d.file_name, date: new Date(d.created_at).toLocaleDateString(),
+                        size: d.file_size, type: d.file_type, storagePath: d.storage_path,
+                        url: isInline ? d.storage_path : `${SUPABASE_URL}/storage/v1/object/public/documents/${d.storage_path}`,
+                        isInline
+                    };
+                });
             },
             async uploadDoc(teacherName, category, file) {
                 const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
@@ -145,19 +179,19 @@
                 const path = `${category}/${safeName}`;
                 const mimeMap = { pdf:'application/pdf', doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ppt:'application/vnd.ms-powerpoint', pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation', xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif' };
                 const contentType = mimeMap[ext] || file.type || 'application/octet-stream';
-                const errors = [];
+                const meta = { teacher_name: teacherName, category, file_name: file.name, file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType };
 
-                // 策略1：SDK 上传（原始方式，之前可用）
+                // 策略1：SDK 上传到 Storage
                 try {
                     const { data, error } = await supabase.storage.from('documents').upload(path, file, { contentType, cacheControl: '3600', upsert: false });
                     if (!error && data) {
-                        await supabase.from('documents').insert({ teacher_name: teacherName, category, file_name: file.name, file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path });
+                        await supabase.from('documents').insert({ ...meta, storage_path: path });
                         return;
                     }
-                    errors.push('SDK: ' + (error?.message || error?.statusCode || JSON.stringify(error)));
-                } catch(e) { errors.push('SDK异常: ' + e.message); }
+                    console.warn('Storage SDK:', error?.message || JSON.stringify(error));
+                } catch(e) { console.warn('Storage SDK异常:', e.message); }
 
-                // 策略2：XHR 上传（绕过 fetch 限制）
+                // 策略2：XHR 直传 Storage
                 try {
                     await new Promise((resolve, reject) => {
                         const xhr = new XMLHttpRequest();
@@ -165,38 +199,49 @@
                         xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY);
                         xhr.setRequestHeader('Authorization', 'Bearer ' + SUPABASE_ANON_KEY);
                         xhr.setRequestHeader('Content-Type', contentType);
-                        xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error('XHR ' + xhr.status + ': ' + xhr.responseText));
-                        xhr.onerror = () => reject(new Error('XHR网络错误'));
+                        xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(xhr.status + ':' + xhr.responseText));
+                        xhr.onerror = () => reject(new Error('网络错误'));
                         xhr.send(file);
                     });
-                    await supabase.from('documents').insert({ teacher_name: teacherName, category, file_name: file.name, file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path });
+                    await supabase.from('documents').insert({ ...meta, storage_path: path });
                     return;
-                } catch(e) { errors.push('XHR: ' + e.message); }
+                } catch(e) { console.warn('Storage XHR:', e.message); }
 
-                // 策略3：fetch + FormData
-                try {
-                    const fd = new FormData(); fd.append('file', file, safeName);
-                    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/documents/${path}`, {
-                        method: 'POST', headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }, body: fd
-                    });
-                    if (res.ok) {
-                        await supabase.from('documents').insert({ teacher_name: teacherName, category, file_name: file.name, file_size: (file.size / 1024).toFixed(1) + ' KB', file_type: contentType, storage_path: path });
-                        return;
-                    }
-                    errors.push('REST: ' + res.status + ' ' + (await res.text()));
-                } catch(e) { errors.push('REST: ' + e.message); }
-
-                // 全部失败 - 显示详细诊断信息
-                const diagMsg = errors.join('\n');
-                console.error('上传诊断:\n' + diagMsg);
-                throw new Error(diagMsg);
+                // 策略3（终极兜底）：文件转 base64 存入数据库，完全绕过 Storage
+                console.warn('Storage 不可用，启用数据库直存兜底');
+                if (file.size > 8 * 1024 * 1024) throw new Error('Storage 服务不可用，且文件超过 8MB 无法使用数据库兜底存储。请联系管理员检查 Supabase Storage 配置。');
+                const base64 = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(new Error('文件读取失败'));
+                    reader.readAsDataURL(file);
+                });
+                const { error: dbErr } = await supabase.from('documents').insert({ ...meta, storage_path: base64 });
+                if (dbErr) throw new Error('数据库存储失败: ' + dbErr.message);
             },
             async deleteDoc(id, storagePath) {
-                await supabase.storage.from('documents').remove([storagePath]);
+                if (storagePath && !storagePath.startsWith('data:')) {
+                    try { await supabase.storage.from('documents').remove([storagePath]); } catch(e) { console.warn('Storage delete:', e); }
+                }
                 await supabase.from('documents').delete().eq('id', id);
             },
-            // 多策略下载文件（兼容所有设备）
+            // 下载文件（兼容 Storage 和内嵌 base64）
             async downloadFile(storagePath) {
+                // 内嵌 base64 → 直接转 Blob
+                if (storagePath && storagePath.startsWith('data:')) {
+                    try {
+                        const res = await fetch(storagePath);
+                        return await res.blob();
+                    } catch(e) {
+                        const [header, b64] = storagePath.split(',');
+                        const mime = header.match(/data:([^;]+)/)?.[1] || 'application/octet-stream';
+                        const bin = atob(b64);
+                        const bytes = new Uint8Array(bin.length);
+                        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                        return new Blob([bytes], { type: mime });
+                    }
+                }
+                // Storage 文件 → 多策略下载
                 const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/documents/${storagePath}`;
                 // 策略1：Supabase SDK download
                 try {
@@ -221,6 +266,22 @@
         const INITIAL_TEACHERS = [{ name: "张老师", id: "T001" }, { name: "王老师", id: "T002" }]; // fallback only
         const DEFAULT_SPORTS_LIST = ["田径", "篮球", "排球", "足球", "乒乓球", "羽毛球", "网球", "垒球", "橄榄球", "武术", "健身健美", "健美操", "瑜伽", "排舞", "啦啦操", "形体", "体育舞蹈", "花样跳绳", "飞盘", "飞镖", "匹克球", "彩带龙"];
         const DEFAULT_SPECIALTY_CONFIG = {};
+        // 通用文件下载/打开辅助函数（兼容 base64 内嵌和 Storage URL）
+        const getDocDownloadUrl = (doc) => doc.isInline ? doc.url : (doc.url + '?download=');
+        const triggerDownload = (doc) => {
+            if (doc.isInline) {
+                // base64 data URL → 创建临时 <a> 下载
+                const a = document.createElement('a');
+                a.href = doc.url;
+                a.download = doc.name || 'file';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            } else {
+                triggerDownload(doc);
+            }
+        };
+
         const ATTENDANCE_STATUS = {
             'normal': { label: '正常', symbol: '', color: 'text-green-600' },
             'absent': { label: '无故旷课', symbol: '○', color: 'text-red-600' },
@@ -507,10 +568,10 @@
             useEffect(() => { (async () => { setLoading(true); setDocs(await DB.getDocs(teacherName, category)); setLoading(false); })(); }, [teacherName, category]);
             const handleUpload = async (e) => {
                 const file = e.target.files[0]; if (!file) return;
-                if (file.size > 50 * 1024 * 1024) { alert("文件过大！最大 50MB。"); return; }
+                if (file.size > 8 * 1024 * 1024) { alert("文件过大！最大 8MB。"); return; }
                 setUploading(true);
                 try { await DB.uploadDoc(teacherName, category, file); setDocs(await DB.getDocs(teacherName, category)); alert("上传成功！"); }
-                catch (err) { console.error('上传详细错误:', err); alert("上传失败（详细信息）：\n\n" + err.message + "\n\n如遇到此问题，请截图发给管理员。\n可能需要检查 Supabase Storage 的 RLS 策略。"); }
+                catch (err) { console.error('上传错误:', err); alert("上传失败：" + err.message); }
                 setUploading(false); e.target.value = '';
             };
             const handleDelete = async (doc) => { if (!confirm("确定删除？")) return; await DB.deleteDoc(doc.id, doc.storagePath); setDocs(docs.filter(d => d.id !== doc.id)); };
@@ -526,15 +587,15 @@
             };
             const handlePreview = (doc) => {
                 const ft = getFileType(doc.name);
-                if (ft === 'other') { window.open(doc.url + '?download=', '_blank'); return; }
+                if (ft === 'other') { triggerDownload(doc); return; }
                 setPreviewDoc({ ...doc, fileType: ft });
             };
             return (
                 <div className="p-4 bg-white h-full flex flex-col relative">
                     <div className="flex justify-between items-center mb-4 pb-4 border-b"><h3 className="font-bold text-lg">{titleMap[category]}管理</h3><button onClick={onBack} className="text-gray-500">返回</button></div>
-                    <div className="mb-4 bg-blue-50 p-4 rounded-lg border border-blue-100"><label className="block text-sm font-bold text-blue-800 mb-2">上传新文档</label><input type="file" onChange={handleUpload} disabled={uploading} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700"/>{uploading && <p className="text-xs text-blue-600 mt-2 animate-pulse">正在上传到云端...</p>}<p className="text-xs text-blue-400 mt-2">* 文件将上传至云端存储（最大 50MB）</p></div>
+                    <div className="mb-4 bg-blue-50 p-4 rounded-lg border border-blue-100"><label className="block text-sm font-bold text-blue-800 mb-2">上传新文档</label><input type="file" onChange={handleUpload} disabled={uploading} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700"/>{uploading && <p className="text-xs text-blue-600 mt-2 animate-pulse">正在上传到云端...</p>}<p className="text-xs text-blue-400 mt-2">* 文件将上传至云端存储（最大 8MB）</p></div>
                     <div className="flex-1 overflow-y-auto">
-                        {loading ? <div className="text-center text-gray-400 mt-10">加载中...</div> : docs.length === 0 ? <div className="text-center text-gray-400 mt-10">暂无文档</div> : (<div className="space-y-2">{docs.map(doc => (<div key={doc.id} className="flex justify-between items-center p-3 border rounded hover:bg-gray-50"><div onClick={() => handlePreview(doc)} className="flex-1 overflow-hidden mr-4 cursor-pointer"><div className="font-bold truncate text-sm text-blue-600 hover:underline">{doc.name}</div><div className="text-xs text-gray-500">{doc.date} · {doc.size}</div></div><div className="flex gap-2 shrink-0"><a href={doc.url + '?download='} className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a><button onClick={() => handleDelete(doc)} className="text-red-500 text-xs border px-2 py-1 rounded hover:bg-red-50">删除</button></div></div>))}</div>)}
+                        {loading ? <div className="text-center text-gray-400 mt-10">加载中...</div> : docs.length === 0 ? <div className="text-center text-gray-400 mt-10">暂无文档</div> : (<div className="space-y-2">{docs.map(doc => (<div key={doc.id} className="flex justify-between items-center p-3 border rounded hover:bg-gray-50"><div onClick={() => handlePreview(doc)} className="flex-1 overflow-hidden mr-4 cursor-pointer"><div className="font-bold truncate text-sm text-blue-600 hover:underline">{doc.name}</div><div className="text-xs text-gray-500">{doc.date} · {doc.size}</div></div><div className="flex gap-2 shrink-0"><a href={getDocDownloadUrl(doc)} download={doc.name} className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a><button onClick={() => handleDelete(doc)} className="text-red-500 text-xs border px-2 py-1 rounded hover:bg-red-50">删除</button></div></div>))}</div>)}
                     </div>
                     {previewDoc && (
                         <div className="fixed inset-0 z-[100] bg-black bg-opacity-75 flex items-center justify-center p-1 sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) setPreviewDoc(null); }}>
@@ -542,7 +603,7 @@
                                 <div className="p-2 border-b flex justify-between items-center shrink-0">
                                     <h3 className="font-bold truncate text-sm flex-1 mr-2">{previewDoc.name}</h3>
                                     <div className="flex gap-2 shrink-0 items-center">
-                                        <a href={previewDoc.url + '?download='} className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
+                                        <a href={getDocDownloadUrl(previewDoc)} download={previewDoc.name} className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
                                         <button onClick={() => setPreviewDoc(null)} className="text-2xl leading-none px-1">&times;</button>
                                     </div>
                                 </div>
@@ -604,7 +665,7 @@
             return (
                 <div className="p-2 w-full">
                     {status === 'loading' && <div className="text-center py-10 text-gray-400 animate-pulse">正在加载 PDF...</div>}
-                    {status === 'error' && <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ PDF 预览失败{errMsg ? ': ' + errMsg : ''}</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>}
+                    {status === 'error' && <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ PDF 预览失败{errMsg ? ': ' + errMsg : ''}</p><a href={url.startsWith('data:') ? url : url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>}
                     <div ref={containerRef} />
                 </div>
             );
@@ -637,7 +698,7 @@
                     }
                 })();
             }, [sp]);
-            if (errMsg) return <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ {errMsg}</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>;
+            if (errMsg) return <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ {errMsg}</p><a href={url.startsWith('data:') ? url : url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>;
             if (html === null) return <div className="text-center py-10 text-gray-400 animate-pulse">正在加载文档...</div>;
             return <div className="p-4 bg-white prose prose-sm max-w-none" style={{fontSize:'14px',lineHeight:'1.8'}} dangerouslySetInnerHTML={{__html: html}} />;
         };
@@ -649,7 +710,7 @@
                     <div className="text-5xl mb-4">📊</div>
                     <p className="text-gray-600 mb-2 font-semibold">PPT 文件暂不支持在线预览</p>
                     <p className="text-gray-400 text-sm mb-6">请下载后使用 WPS 或 PowerPoint 打开</p>
-                    <a href={url + '?download='} className="inline-block bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium">下载文件</a>
+                    <a href={url.startsWith('data:') ? url : url + '?download='} className="inline-block bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium">下载文件</a>
                 </div>
             );
         };
@@ -668,7 +729,7 @@
                     } catch (e) { console.error('Excel render:', e); setErrMsg(e.message || '未知错误'); }
                 })();
             }, [sp]);
-            if (errMsg) return <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ 表格预览失败: {errMsg}</p><a href={url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>;
+            if (errMsg) return <div className="text-center py-10 px-4"><p className="text-gray-500 mb-2">⚠️ 表格预览失败: {errMsg}</p><a href={url.startsWith('data:') ? url : url + '?download='} className="text-blue-600 underline text-sm">点击下载文件</a></div>;
             if (html === null) return <div className="text-center py-10 text-gray-400 animate-pulse">正在加载表格...</div>;
             return <div className="w-full bg-white p-2 overflow-auto text-sm" dangerouslySetInnerHTML={{__html: html}} />;
         };
@@ -683,10 +744,10 @@
             useEffect(() => { loadDocs(); }, []);
             const handleUpload = async (e) => {
                 const file = e.target.files[0]; if (!file) return;
-                if (file.size > 50 * 1024 * 1024) { alert("文件过大！最大 50MB。"); return; }
+                if (file.size > 8 * 1024 * 1024) { alert("文件过大！最大 8MB。"); return; }
                 setUploading(true);
                 try { await DB.uploadDoc('__admin__', 'textbook', file); await loadDocs(); alert("上传成功！"); }
-                catch (err) { console.error('教材上传详细错误:', err); alert("上传失败（详细信息）：\n\n" + err.message + "\n\n请检查：\n1. Supabase Storage 桶 'documents' 是否存在\n2. Storage RLS 是否允许 INSERT\n3. 打开浏览器控制台 (F12) 查看详细日志"); }
+                catch (err) { console.error('教材上传错误:', err); alert("上传失败：" + err.message); }
                 setUploading(false); e.target.value = '';
             };
             const handleDelete = async (doc) => { if (!confirm("确定删除教材 \"" + doc.name + "\" ？")) return; await DB.deleteDoc(doc.id, doc.storagePath); setDocs(docs.filter(d => d.id !== doc.id)); };
@@ -701,7 +762,7 @@
             };
             const handlePreview = (doc) => {
                 const ft = getFileType(doc.name);
-                if (ft === 'other') { window.open(doc.url + '?download=', '_blank'); return; }
+                if (ft === 'other') { triggerDownload(doc); return; }
                 setPreviewDoc({ ...doc, fileType: ft });
             };
             return (
@@ -710,33 +771,7 @@
                         <label className="block text-sm font-bold text-green-800 mb-2">上传教材（所有教师共享）</label>
                         <input type="file" onChange={handleUpload} disabled={uploading} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-600 file:text-white hover:file:bg-green-700"/>
                         {uploading && <p className="text-xs text-green-600 mt-2 animate-pulse">正在上传...</p>}
-                        <p className="text-xs text-green-500 mt-2">* 上传的教材将对所有教师可见（最大 50MB）</p>
-                        <button onClick={async () => {
-                            let msg = '=== Storage 诊断 ===\n';
-                            try {
-                                msg += 'SDK版本: ' + (window.supabase?.version || 'unknown') + '\n';
-                                msg += 'Key前缀: ' + SUPABASE_ANON_KEY.substring(0, 16) + '...\n';
-                                // 测试1：列出桶
-                                try {
-                                    const { data: buckets, error: bErr } = await supabase.storage.listBuckets();
-                                    msg += '桶列表: ' + (bErr ? '错误-'+bErr.message : JSON.stringify((buckets||[]).map(b=>b.name))) + '\n';
-                                } catch(e) { msg += '桶列表异常: ' + e.message + '\n'; }
-                                // 测试2：列出documents桶内容
-                                try {
-                                    const { data: files, error: fErr } = await supabase.storage.from('documents').list('textbook', { limit: 3 });
-                                    msg += 'textbook目录: ' + (fErr ? '错误-'+fErr.message : (files||[]).length + '个文件') + '\n';
-                                } catch(e) { msg += '目录列表异常: ' + e.message + '\n'; }
-                                // 测试3：试上传一个1字节文件
-                                try {
-                                    const testBlob = new Blob(['x'], {type:'text/plain'});
-                                    const testPath = 'textbook/_diag_test_' + Date.now() + '.txt';
-                                    const { data, error: uErr } = await supabase.storage.from('documents').upload(testPath, testBlob, {contentType:'text/plain'});
-                                    if (uErr) { msg += '测试上传: 失败-' + (uErr.message || JSON.stringify(uErr)) + '\n'; }
-                                    else { msg += '测试上传: 成功! ✅\n'; await supabase.storage.from('documents').remove([testPath]); }
-                                } catch(e) { msg += '测试上传异常: ' + e.message + '\n'; }
-                            } catch(e) { msg += '诊断异常: ' + e.message + '\n'; }
-                            alert(msg);
-                        }} className="mt-2 text-xs text-gray-400 underline hover:text-gray-600">上传有问题？点击诊断</button>
+                        <p className="text-xs text-green-500 mt-2">* 上传的教材将对所有教师可见（最大 8MB）</p>
                     </div>
                     <div className="flex-1 overflow-y-auto">
                         {loading ? <div className="text-center text-gray-400 mt-10">加载中...</div> : docs.length === 0 ? <div className="text-center text-gray-400 mt-10">暂无教材</div> : (
@@ -747,7 +782,7 @@
                                         <div className="text-xs text-gray-500">{doc.date} · {doc.size}</div>
                                     </div>
                                     <div className="flex gap-2 shrink-0">
-                                        <a href={doc.url + '?download='} className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a>
+                                        <a href={getDocDownloadUrl(doc)} download={doc.name} className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100">下载</a>
                                         <button onClick={() => handleDelete(doc)} className="text-red-500 text-xs border px-2 py-1 rounded hover:bg-red-50">删除</button>
                                     </div>
                                 </div>
@@ -760,7 +795,7 @@
                                 <div className="p-2 border-b flex justify-between items-center shrink-0">
                                     <h3 className="font-bold truncate text-sm flex-1 mr-2">{previewDoc.name}</h3>
                                     <div className="flex gap-2 shrink-0 items-center">
-                                        <a href={previewDoc.url + '?download='} className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
+                                        <a href={getDocDownloadUrl(previewDoc)} download={previewDoc.name} className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
                                         <button onClick={() => setPreviewDoc(null)} className="text-2xl leading-none px-1">&times;</button>
                                     </div>
                                 </div>
@@ -795,7 +830,7 @@
             };
             const handlePreview = (doc) => {
                 const ft = getFileType(doc.name);
-                if (ft === 'other') { window.open(doc.url + '?download=', '_blank'); return; }
+                if (ft === 'other') { triggerDownload(doc); return; }
                 setPreviewDoc({ ...doc, fileType: ft });
             };
             return (
@@ -809,7 +844,7 @@
                                         <div className="font-bold truncate text-sm text-green-600 hover:underline">{doc.name}</div>
                                         <div className="text-xs text-gray-500">{doc.date} · {doc.size}</div>
                                     </div>
-                                    <a href={doc.url + '?download='} className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100 shrink-0">下载</a>
+                                    <a href={getDocDownloadUrl(doc)} download={doc.name} className="text-gray-600 text-xs border px-2 py-1 rounded hover:bg-gray-100 shrink-0">下载</a>
                                 </div>
                             ))}</div>
                         )}
@@ -820,7 +855,7 @@
                                 <div className="p-2 border-b flex justify-between items-center shrink-0">
                                     <h3 className="font-bold truncate text-sm flex-1 mr-2">{previewDoc.name}</h3>
                                     <div className="flex gap-2 shrink-0 items-center">
-                                        <a href={previewDoc.url + '?download='} className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
+                                        <a href={getDocDownloadUrl(previewDoc)} download={previewDoc.name} className="text-blue-600 text-xs border px-2 py-1 rounded">下载</a>
                                         <button onClick={() => setPreviewDoc(null)} className="text-2xl leading-none px-1">&times;</button>
                                     </div>
                                 </div>
@@ -2113,6 +2148,8 @@
 
             // --- 学生数据变化时自动同步到 Supabase ---
             const saveTimerRef = React.useRef(null);
+            const saveRetryCount = React.useRef(0);
+            const [saveError, setSaveError] = useState('');
             useEffect(() => {
                 // 数据未就绪前，不触发任何保存
                 if (!dataReadyRef.current) return;
@@ -2122,10 +2159,29 @@
                     try {
                         await DB.saveStudents(students);
                         setSaveStatus('saved');
+                        saveRetryCount.current = 0;
+                        setSaveError('');
                         setTimeout(() => setSaveStatus(''), 2000);
                     } catch (err) {
                         console.error('保存失败:', err);
+                        setSaveError(err.message || '未知错误');
                         setSaveStatus('error');
+                        // 自动重试一次（3秒后）
+                        if (saveRetryCount.current < 1) {
+                            saveRetryCount.current++;
+                            setTimeout(async () => {
+                                try {
+                                    setSaveStatus('saving');
+                                    await DB.saveStudents(students);
+                                    setSaveStatus('saved');
+                                    setSaveError('');
+                                    setTimeout(() => setSaveStatus(''), 2000);
+                                } catch(e) {
+                                    setSaveStatus('error');
+                                    setSaveError(e.message || '重试失败');
+                                }
+                            }, 3000);
+                        }
                     }
                 }, 1500);
                 return () => clearTimeout(saveTimerRef.current);
@@ -2162,8 +2218,8 @@
             const SaveIndicator = () => {
                 if (!saveStatus) return null;
                 const styles = { saving: 'bg-yellow-100 text-yellow-700', saved: 'bg-green-100 text-green-700', error: 'bg-red-100 text-red-700' };
-                const labels = { saving: '☁️ 正在同步...', saved: '✅ 已同步到云端', error: '❌ 同步失败，请检查网络' };
-                return <div className={`fixed bottom-4 right-4 px-3 py-1.5 rounded-full text-xs z-[200] shadow ${styles[saveStatus]}`}>{labels[saveStatus]}</div>;
+                const labels = { saving: '☁️ 正在同步...', saved: '✅ 已同步到云端', error: '❌ 同步失败' };
+                return <div onClick={() => { if(saveError) alert('同步错误详情:\n' + saveError); }} className={`fixed bottom-4 right-4 px-3 py-1.5 rounded-full text-xs z-[200] shadow cursor-pointer ${styles[saveStatus]}`}>{labels[saveStatus]}{saveStatus === 'error' && ' (点击查看)'}</div>;
             };
 
             return (
