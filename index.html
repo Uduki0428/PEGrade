@@ -875,13 +875,66 @@
 
         // --- 模拟测试及作业模块 ---
         const MockTestModule = ({ students, onSave, onClose, semester, className, teacherName }) => {
-            const [batchField, setBatchField] = useState(null); // 'mock1','mock2','hw1','hw2'
+            const [batchField, setBatchField] = useState(null);
             const fieldLabels = { mock1:'模拟1', mock2:'模拟2', hw1:'作业1', hw2:'作业2' };
+            const [localScores, setLocalScores] = useState({});
+            const mockUserChanged = React.useRef(false);
+
+            useEffect(() => {
+                const init = {};
+                students.forEach(s => { init[s.id] = { mock1: s.scores.mock1 || '', mock2: s.scores.mock2 || '', hw1: s.scores.hw1 || '', hw2: s.scores.hw2 || '' }; });
+                setLocalScores(init);
+            }, [students]);
+
+            const handleChange = (sid, key, val) => {
+                mockUserChanged.current = true;
+                setLocalScores(prev => ({ ...prev, [sid]: { ...prev[sid], [key]: val } }));
+            };
+
+            // 自动保存（防抖500ms）
+            const mockSaveTimer = React.useRef(null);
+            const doSyncSave = React.useCallback((scores) => {
+                const updates = students.map(s => {
+                    const sc = scores[s.id];
+                    if (!sc) return null;
+                    return { id: s.id, scores: { ...s.scores, ...sc } };
+                }).filter(Boolean);
+                if (updates.length > 0) onSave(updates);
+            }, [students, onSave]);
+
+            useEffect(() => {
+                if (!mockUserChanged.current) return;
+                if (mockSaveTimer.current) clearTimeout(mockSaveTimer.current);
+                mockSaveTimer.current = setTimeout(() => { doSyncSave(localScores); mockUserChanged.current = false; }, 500);
+                return () => { if (mockSaveTimer.current) clearTimeout(mockSaveTimer.current); };
+            }, [localScores, doSyncSave]);
+
+            const handleClose = () => {
+                if (mockSaveTimer.current) clearTimeout(mockSaveTimer.current);
+                doSyncSave(localScores);
+                onClose();
+            };
+
+            // 从批量录入弹窗返回时同步数据
+            const handleBatchDone = (updates) => {
+                onSave(updates);
+                // 同步到 localScores
+                setLocalScores(prev => {
+                    const next = { ...prev };
+                    updates.forEach(u => {
+                        if (next[u.id]) {
+                            next[u.id] = { ...next[u.id], mock1: u.scores.mock1 || '', mock2: u.scores.mock2 || '', hw1: u.scores.hw1 || '', hw2: u.scores.hw2 || '' };
+                        }
+                    });
+                    return next;
+                });
+            };
+
             const handleExport = () => {
                 const data = students.map((s, i) => ({
                     '序号': i + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
-                    '模拟1': s.scores.mock1 || '', '模拟2': s.scores.mock2 || '',
-                    '作业1': s.scores.hw1 || '', '作业2': s.scores.hw2 || '',
+                    '模拟1': localScores[s.id]?.mock1 || '', '模拟2': localScores[s.id]?.mock2 || '',
+                    '作业1': localScores[s.id]?.hw1 || '', '作业2': localScores[s.id]?.hw2 || '',
                 }));
                 const ws = XLSX.utils.json_to_sheet(data);
                 const wb = XLSX.utils.book_new();
@@ -891,10 +944,10 @@
             return (
                 <div className="fixed inset-0 bg-white z-[50] flex flex-col">
                     <div className="p-4 shadow flex justify-between items-center bg-gray-50">
-                        <div><h3 className="font-bold">模拟测试及作业</h3><p className="text-xs text-gray-500">点击列标题可批量录入单项成绩</p></div>
+                        <div><h3 className="font-bold">模拟测试及作业</h3><p className="text-xs text-gray-500">可直接编辑 · 输入后自动保存 · 点击列标题可批量录入</p></div>
                         <div className="flex gap-2">
                             <button onClick={handleExport} className="bg-green-600 text-white px-3 py-1 rounded text-sm">导出Excel</button>
-                            <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
+                            <button onClick={handleClose} className="text-gray-500 text-2xl">&times;</button>
                         </div>
                     </div>
                     <div className="flex-1 overflow-auto p-2">
@@ -916,14 +969,16 @@
                                         <td className="border p-1 font-medium sticky left-0 bg-white z-10">{s.name}</td>
                                         <td className="border p-1 text-gray-500">{s.id}</td>
                                         {['mock1','mock2','hw1','hw2'].map(k => (
-                                            <td key={k} className="border p-1 text-center">{s.scores[k] || '-'}</td>
+                                            <td key={k} className="border p-1">
+                                                <input type="number" className="w-full text-center p-1 border-0 outline-none focus:bg-blue-50 rounded" value={localScores[s.id]?.[k] || ''} onChange={e => handleChange(s.id, k, e.target.value)} />
+                                            </td>
                                         ))}
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                     </div>
-                    {batchField && <MockBatchModal students={students} field={batchField} fieldName={fieldLabels[batchField]} onClose={() => setBatchField(null)} onSave={onSave} />}
+                    {batchField && <MockBatchModal students={students} field={batchField} fieldName={fieldLabels[batchField]} onClose={() => setBatchField(null)} onSave={handleBatchDone} />}
                 </div>
             );
         };
@@ -1231,8 +1286,6 @@
                         '序号': index + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
                         [`${info.display1}(1)`]: rec.item1[0], [`${info.display1}(2)`]: rec.item1[1], [`${info.display1}(3)`]: rec.item1[2], [`${info.display1}(最好)`]: best1,
                         [`${info.display2}(1)`]: rec.item2[0], [`${info.display2}(2)`]: rec.item2[1], [`${info.display2}(3)`]: rec.item2[2], [`${info.display2}(最好)`]: best2,
-                        '模拟1': s.scores.mock1 || '', '模拟2': s.scores.mock2 || '',
-                        '作业1': s.scores.hw1 || '', '作业2': s.scores.hw2 || '',
                     };
                 });
                 const ws = XLSX.utils.json_to_sheet(data);
