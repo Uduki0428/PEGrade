@@ -15,23 +15,47 @@
 
     <title>高校体育课成绩管理系统</title>
     
+    <!-- 核心库：主源 unpkg，备源 cdnjs -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script>if(!window.React){document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"><\/script>')}</script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script>if(!window.ReactDOM){document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"><\/script>')}</script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script>if(!window.Babel){document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"><\/script>')}</script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"></script>
     <script src="https://unpkg.com/lucide@0.344.0"></script>
     <!-- Supabase JS SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+
+    <!-- 关键库加载检测：如果核心库缺失，显示友好错误 -->
     <script>
-        // 验证库加载状态
-        window.addEventListener('load', function() {
-            console.log('[LIB CHECK] pdfjsLib:', typeof window.pdfjsLib);
-            console.log('[LIB CHECK] mammoth:', typeof window.mammoth);
-            if (window.mammoth) console.log('[LIB CHECK] mammoth.convertToHtml:', typeof window.mammoth.convertToHtml);
-        });
+    window.addEventListener('DOMContentLoaded', function() {
+        var missing = [];
+        if (!window.React) missing.push('React');
+        if (!window.ReactDOM) missing.push('ReactDOM');
+        if (!window.Babel) missing.push('Babel');
+        if (!window.supabase) missing.push('Supabase');
+        if (missing.length > 0) {
+            var root = document.getElementById('root');
+            if (root) root.innerHTML = '<div style="padding:40px;text-align:center;font-family:system-ui">' +
+                '<h2 style="color:#ef4444;margin-bottom:16px">⚠️ 页面核心库加载失败</h2>' +
+                '<p style="color:#666;margin-bottom:12px">以下依赖未能加载：<strong>' + missing.join(', ') + '</strong></p>' +
+                '<p style="color:#666;margin-bottom:20px">可能原因：网络环境屏蔽了CDN域名(unpkg.com, cdn.jsdelivr.net, cdn.tailwindcss.com)</p>' +
+                '<p style="color:#333"><strong>解决方法：</strong></p>' +
+                '<ul style="text-align:left;max-width:400px;margin:10px auto;color:#555;line-height:2">' +
+                '<li>1. 尝试使用手机4G/5G网络访问</li>' +
+                '<li>2. 更换浏览器（推荐Chrome/Edge）</li>' +
+                '<li>3. 关闭VPN或代理后重试</li>' +
+                '<li>4. 联系管理员确认网络未屏蔽外部CDN</li>' +
+                '</ul>' +
+                '<button onclick="location.reload()" style="margin-top:16px;padding:8px 24px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer">刷新重试</button>' +
+                '</div>';
+        }
+    });
     </script>
 
     <style>
@@ -55,7 +79,7 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
+        <script type="text/babel">
         const { useState, useEffect, useMemo, useCallback } = React;
 
         // =============================================================
@@ -89,6 +113,22 @@
             async setConfig(key, value) {
                 await supabase.from('app_config').upsert({ key, value, updated_at: new Date().toISOString() });
             },
+            // --- 签名 ---
+            async getSignature(teacherName) {
+                const { data } = await supabase.from('app_config').select('value').eq('key', `sig_${teacherName}`).single();
+                return data?.value || null;
+            },
+            async setSignature(teacherName, base64) {
+                await supabase.from('app_config').upsert({ key: `sig_${teacherName}`, value: base64, updated_at: new Date().toISOString() });
+            },
+            // --- 换考认领 ---
+            async getSwapClaims() {
+                const { data } = await supabase.from('app_config').select('value').eq('key', 'swap_claims').single();
+                return data?.value || {};
+            },
+            async setSwapClaims(claims) {
+                await supabase.from('app_config').upsert({ key: 'swap_claims', value: claims, updated_at: new Date().toISOString() });
+            },
             // --- 学生 ---
             async getStudents() {
                 // Supabase 默认最多返回 1000 行，需要分页获取全部
@@ -111,6 +151,10 @@
                 }));
             },
             async saveStudents(students) {
+                if (!students || students.length === 0) {
+                    console.log('saveStudents: 空数据，跳过保存（防止误删）');
+                    return;
+                }
                 const rows = students.map(s => ({
                     id: s.id, semester: s.semester, name: s.name, gender: s.gender,
                     admin_class: s.adminClass, option_class: s.optionClass, teacher_name: s.teacherName,
@@ -118,40 +162,15 @@
                     updated_at: new Date().toISOString()
                 }));
                 
-                // 策略1：批量 upsert（需要 UNIQUE 约束 on (id, semester)）
-                let batchOk = true;
+                // 仅使用 upsert（不删除任何数据，只新增或更新）
                 for (let i = 0; i < rows.length; i += 500) {
                     const chunk = rows.slice(i, i + 500);
                     const { error } = await supabase.from('students').upsert(chunk, { onConflict: 'id,semester' });
                     if (error) {
-                        console.warn('批量upsert失败:', error.message, '- 切换兜底方案');
-                        batchOk = false;
-                        break;
+                        console.error('upsert失败:', error.message);
+                        throw new Error('保存失败: ' + error.message);
                     }
                 }
-                if (batchOk) return;
-                
-                // 策略2：按学期 delete + insert（绕过所有约束问题）
-                const semesters = [...new Set(rows.map(r => r.semester))];
-                for (const sem of semesters) {
-                    const semRows = rows.filter(r => r.semester === sem);
-                    // 删除该学期所有数据
-                    const { error: delErr } = await supabase.from('students').delete().eq('semester', sem);
-                    if (delErr) {
-                        console.error('删除学期数据失败:', delErr);
-                        throw new Error('删除旧数据失败: ' + delErr.message);
-                    }
-                    // 分批插入
-                    for (let i = 0; i < semRows.length; i += 500) {
-                        const chunk = semRows.slice(i, i + 500);
-                        const { error: insErr } = await supabase.from('students').insert(chunk);
-                        if (insErr) {
-                            console.error('插入数据失败:', insErr);
-                            throw new Error('插入数据失败: ' + insErr.message);
-                        }
-                    }
-                }
-                console.log('兜底保存完成（delete+insert）');
             },
             async deleteStudent(id, semester) {
                 await supabase.from('students').delete().eq('id', id).eq('semester', semester);
@@ -1491,6 +1510,7 @@
                                     <h4 className="font-bold text-orange-800 text-sm">专项考核 ({sport})</h4>
                                     <select className="text-xs border p-1 rounded" value={sport} onChange={e=>setSport(e.target.value)}>{sportsList.map(s => <option key={s} value={s}>{s}</option>)}</select>
                                 </div>
+                                {scores.swapTeacher && <div className="text-xs text-green-700 bg-green-50 px-2 py-1 rounded mb-2">换考教师：{scores.swapTeacher}</div>}
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className="text-xs text-gray-600 block mb-1">专项1 ({config.spec1?.type === 'score' ? '分值' : config.spec1?.type})</label>
@@ -1833,6 +1853,269 @@
             );
         };
 
+        // --- 签名上传组件 ---
+        const SignatureUpload = ({ teacherName, onClose }) => {
+            const [sig, setSig] = useState(null);
+            const [loading, setLoading] = useState(true);
+            useEffect(() => { (async () => { setLoading(true); const s = await DB.getSignature(teacherName); setSig(s); setLoading(false); })(); }, [teacherName]);
+            const handleUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (file.size > 500 * 1024) { alert('签名图片不能超过500KB'); return; }
+                const reader = new FileReader();
+                reader.onload = async () => { const b64 = reader.result; setSig(b64); await DB.setSignature(teacherName, b64); alert('签名已保存'); };
+                reader.readAsDataURL(file);
+            };
+            const handleDelete = async () => { if (!confirm('确定删除签名？')) return; setSig(null); await DB.setSignature(teacherName, null); };
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-4">
+                    <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl">
+                        <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold">电子签名管理</h3><button onClick={onClose} className="text-2xl">&times;</button></div>
+                        <div className="p-6 text-center">
+                            {loading ? <p className="text-gray-400">加载中...</p> : sig ? (
+                                <div>
+                                    <p className="text-xs text-gray-500 mb-2">当前签名预览：</p>
+                                    <img src={sig} alt="签名" className="mx-auto max-h-24 border rounded p-2 bg-gray-50" />
+                                    <div className="mt-4 flex gap-2 justify-center">
+                                        <label className="bg-blue-600 text-white px-4 py-2 rounded text-sm cursor-pointer hover:bg-blue-700">重新上传<input type="file" accept="image/*" className="hidden" onChange={handleUpload}/></label>
+                                        <button onClick={handleDelete} className="bg-red-500 text-white px-4 py-2 rounded text-sm hover:bg-red-600">删除</button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div>
+                                    <p className="text-gray-500 mb-4">尚未上传电子签名</p>
+                                    <label className="bg-blue-600 text-white px-6 py-2 rounded cursor-pointer hover:bg-blue-700 text-sm">上传签名图片<input type="file" accept="image/*" className="hidden" onChange={handleUpload}/></label>
+                                    <p className="text-xs text-gray-400 mt-3">建议：白底手写签名照片，PNG/JPG格式，不超过500KB</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- ExcelJS 导出辅助（支持签名图片） ---
+        const exportWithSignature = async (sheetName, columns, rows, fileName, teacherName, swapTeacherName) => {
+            const EJ = window.ExcelJS;
+            const wb = new EJ.Workbook();
+            const ws = wb.addWorksheet(sheetName);
+
+            // 列定义
+            ws.columns = columns.map(c => ({ header: c.header, key: c.key, width: c.width || 12 }));
+
+            // 表头样式
+            const headerRow = ws.getRow(1);
+            headerRow.font = { bold: true };
+            headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+            headerRow.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5DC' } }; cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} }; });
+
+            // 数据行
+            rows.forEach((r, i) => {
+                const row = ws.addRow(r);
+                row.alignment = { horizontal: 'center', vertical: 'middle' };
+                row.eachCell(cell => { cell.border = { top:{style:'thin'}, bottom:{style:'thin'}, left:{style:'thin'}, right:{style:'thin'} }; });
+                // 总评不及格标红
+                if (r['总评'] !== undefined && parseFloat(r['总评']) < 60) {
+                    const nameCol = columns.findIndex(c => c.key === '姓名') + 1;
+                    const totalCol = columns.findIndex(c => c.key === '总评') + 1;
+                    if (nameCol > 0) row.getCell(nameCol).font = { color: { argb: 'FFFF0000' }, bold: true };
+                    if (totalCol > 0) row.getCell(totalCol).font = { color: { argb: 'FFFF0000' }, bold: true };
+                }
+            });
+
+            // 签名区域 —— 右下角，标签与签名同一行，标签靠前、图片靠后
+            var totalCols = columns.length;
+            var sigStartRow = ws.rowCount + 3;
+            var labelCol = Math.max(totalCols - 3, 2);  // 标签列（靠前）
+            var imgCol = labelCol + 2;                   // 图片列（标签右侧隔一列）
+
+            ws.getRow(sigStartRow).height = 50;
+            
+            // 任课教师签名
+            ws.getCell(sigStartRow, labelCol).value = '任课教师签名：';
+            ws.getCell(sigStartRow, labelCol).font = { bold: true };
+            ws.getCell(sigStartRow, labelCol).alignment = { horizontal: 'right', vertical: 'middle' };
+            var teacherSig = await DB.getSignature(teacherName);
+            if (teacherSig) {
+                try {
+                    var b64 = teacherSig.split(',')[1] || teacherSig;
+                    var extT = teacherSig.includes('png') ? 'png' : 'jpeg';
+                    var imgId = wb.addImage({ base64: b64, extension: extT });
+                    ws.addImage(imgId, { tl: { col: imgCol - 0.8, row: sigStartRow - 1 + 0.1 }, ext: { width: 130, height: 44 } });
+                } catch(e) { ws.getCell(sigStartRow, imgCol).value = teacherName; }
+            } else {
+                ws.getCell(sigStartRow, imgCol).value = teacherName;
+            }
+
+            // 换考教师签名（下方隔一行）
+            if (swapTeacherName) {
+                var swapRow = sigStartRow + 2;
+                ws.getRow(swapRow).height = 50;
+                ws.getCell(swapRow, labelCol).value = '换考教师签名：';
+                ws.getCell(swapRow, labelCol).font = { bold: true };
+                ws.getCell(swapRow, labelCol).alignment = { horizontal: 'right', vertical: 'middle' };
+                var swapSig = await DB.getSignature(swapTeacherName);
+                if (swapSig) {
+                    try {
+                        var b64s = swapSig.split(',')[1] || swapSig;
+                        var extS = swapSig.includes('png') ? 'png' : 'jpeg';
+                        var imgIdS = wb.addImage({ base64: b64s, extension: extS });
+                        ws.addImage(imgIdS, { tl: { col: imgCol - 0.8, row: swapRow - 1 + 0.1 }, ext: { width: 130, height: 44 } });
+                    } catch(e) { ws.getCell(swapRow, imgCol).value = swapTeacherName; }
+                } else {
+                    ws.getCell(swapRow, imgCol).value = swapTeacherName;
+                }
+            }
+
+            // 下载
+            const buf = await wb.xlsx.writeBuffer();
+            const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = fileName; a.click();
+            URL.revokeObjectURL(url);
+        };
+
+        // --- 换考模块 ---
+        const SwapExamModule = ({ currentUser, students, setStudents, semester, sportsList, specialtyConfig, onClose }) => {
+            const [swapClaims, setSwapClaims] = useState({});
+            const [selectedClass, setSelectedClass] = useState('');
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => { (async () => { setLoading(true); const c = await DB.getSwapClaims(); setSwapClaims(c); setLoading(false); })(); }, []);
+
+            const myClaims = (swapClaims[semester] || {})[currentUser.name] || [];
+
+            // 所有可换考的班级（不是自己教的班级）
+            const availableClasses = useMemo(() => {
+                const map = {};
+                students.filter(s => s.semester === semester).forEach(s => {
+                    const cls = s.optionClass;
+                    if (!map[cls]) map[cls] = { name: cls, teacher: s.teacherName, count: 0 };
+                    map[cls].count++;
+                });
+                return Object.values(map).filter(c => {
+                    const teachers = (c.teacher || '').split(/\s+/);
+                    return !teachers.includes(currentUser.name);
+                }).sort((a,b) => a.name.localeCompare(b.name, 'zh-CN'));
+            }, [students, semester, currentUser.name]);
+
+            const handleClaim = async (cls) => {
+                const next = { ...swapClaims };
+                if (!next[semester]) next[semester] = {};
+                if (!next[semester][currentUser.name]) next[semester][currentUser.name] = [];
+                const arr = next[semester][currentUser.name];
+                if (arr.includes(cls)) { next[semester][currentUser.name] = arr.filter(c => c !== cls); }
+                else { arr.push(cls); }
+                setSwapClaims(next);
+                await DB.setSwapClaims(next);
+            };
+
+            const classStudents = useMemo(() => {
+                if (!selectedClass) return [];
+                return students.filter(s => s.semester === semester && s.optionClass === selectedClass).sort((a,b) => parseInt(a.id) - parseInt(b.id));
+            }, [students, semester, selectedClass]);
+
+            const matchedSport = useMemo(() => { return sportsList.find(s => selectedClass?.includes(s)) || sportsList[0]; }, [selectedClass, sportsList]);
+            const config = specialtyConfig[matchedSport] || { spec1: {type:'score'}, spec2: {type:'score'} };
+
+            const handleSaveSpec = (sid, field, val) => {
+                setStudents(prev => prev.map(s => {
+                    if (s.id === sid && s.semester === semester) {
+                        const newScores = { ...s.scores, [field]: val, swapTeacher: currentUser.name };
+                        // 如果是原始值输入，计算折算分
+                        if (field === 'rawSpec1' || field === 'rawSpec2') {
+                            const specConf = field === 'rawSpec1' ? config.spec1 : config.spec2;
+                            const scoreField = field === 'rawSpec1' ? 'special1' : 'special2';
+                            newScores[scoreField] = calculateSpecialtyScore(val, s.gender, specConf);
+                        }
+                        return { ...s, scores: newScores };
+                    }
+                    return s;
+                }));
+            };
+
+            if (loading) return <div className="fixed inset-0 bg-white z-[50] flex items-center justify-center"><p>加载中...</p></div>;
+
+            // 如果选择了班级，显示打分界面
+            if (selectedClass) {
+                return (
+                    <div className="fixed inset-0 bg-white z-[50] flex flex-col">
+                        <div className="p-4 shadow flex justify-between items-center bg-green-50">
+                            <div><h3 className="font-bold text-green-800">换考打分：{selectedClass}</h3><p className="text-xs text-gray-500">仅可录入专项1和专项2 · 自动保存</p></div>
+                            <button onClick={() => setSelectedClass('')} className="text-gray-500 text-2xl">&times;</button>
+                        </div>
+                        <div className="flex-1 overflow-auto p-2">
+                            <table className="min-w-full text-xs border-collapse">
+                                <thead><tr className="bg-gray-100">
+                                    <th className="border p-2 sticky left-0 bg-gray-100 z-10">姓名</th>
+                                    <th className="border p-2">学号</th>
+                                    <th className="border p-2">性别</th>
+                                    <th className="border p-2 bg-orange-50">专项1 ({config.spec1?.type === 'score' ? '分值' : config.spec1?.type})</th>
+                                    <th className="border p-2 bg-orange-50">专项2 ({config.spec2?.type === 'score' ? '分值' : config.spec2?.type})</th>
+                                </tr></thead>
+                                <tbody>
+                                    {classStudents.map(s => (
+                                        <tr key={s.id} className="hover:bg-gray-50">
+                                            <td className="border p-1 font-medium sticky left-0 bg-white z-10">{s.name}</td>
+                                            <td className="border p-1 text-gray-500">{s.id}</td>
+                                            <td className="border p-1 text-center">{s.gender}</td>
+                                            <td className="border p-1 bg-orange-50">
+                                                <input type="number" className="w-full text-center p-1 border-0 outline-none focus:bg-orange-100 rounded"
+                                                    value={config.spec1?.type === 'score' ? (s.scores.special1 || '') : (s.scores.rawSpec1 || '')}
+                                                    onChange={e => handleSaveSpec(s.id, config.spec1?.type === 'score' ? 'special1' : 'rawSpec1', e.target.value)} />
+                                                {config.spec1?.type !== 'score' && s.scores.special1 ? <div className="text-xs text-orange-600 text-center">→{s.scores.special1}分</div> : null}
+                                            </td>
+                                            <td className="border p-1 bg-orange-50">
+                                                <input type="number" className="w-full text-center p-1 border-0 outline-none focus:bg-orange-100 rounded"
+                                                    value={config.spec2?.type === 'score' ? (s.scores.special2 || '') : (s.scores.rawSpec2 || '')}
+                                                    onChange={e => handleSaveSpec(s.id, config.spec2?.type === 'score' ? 'special2' : 'rawSpec2', e.target.value)} />
+                                                {config.spec2?.type !== 'score' && s.scores.special2 ? <div className="text-xs text-orange-600 text-center">→{s.scores.special2}分</div> : null}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            }
+
+            // 班级列表
+            return (
+                <div className="fixed inset-0 bg-white z-[50] flex flex-col">
+                    <div className="p-4 shadow flex justify-between items-center bg-green-50">
+                        <div><h3 className="font-bold text-green-800">换考模块</h3><p className="text-xs text-gray-500">认领班级后可为学生打专项分</p></div>
+                        <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
+                    </div>
+                    <div className="flex-1 overflow-auto p-4">
+                        {myClaims.length > 0 && (
+                            <div className="mb-6">
+                                <h4 className="font-bold text-sm text-green-700 mb-2">已认领的换考班级 (点击进入打分)</h4>
+                                <div className="flex flex-wrap gap-2">
+                                    {myClaims.map(cls => (
+                                        <button key={cls} onClick={() => setSelectedClass(cls)} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">{cls}</button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        <h4 className="font-bold text-sm text-gray-600 mb-2">可认领的班级</h4>
+                        <div className="space-y-2">
+                            {availableClasses.map(c => {
+                                const claimed = myClaims.includes(c.name);
+                                return (
+                                    <div key={c.name} className="flex justify-between items-center bg-white border rounded-lg p-3">
+                                        <div><span className="font-bold">{c.name}</span><span className="text-xs text-gray-500 ml-2">学生: {c.count} | 原分配: <span className={c.teacher ? 'text-green-600' : 'text-red-500'}>{c.teacher || '未分配'}</span></span></div>
+                                        <button onClick={() => handleClaim(c.name)} className={`px-3 py-1 rounded text-sm ${claimed ? 'bg-gray-200 text-gray-600' : 'bg-green-600 text-white hover:bg-green-700'}`}>{claimed ? '取消认领' : '认领'}</button>
+                                    </div>
+                                );
+                            })}
+                            {availableClasses.length === 0 && <p className="text-gray-400 text-center py-6">没有可认领的班级</p>}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         const TeacherPanel = ({ currentUser, students, setStudents, semester, setSemester, onLogout, sportsList, specialtyConfig }) => {
             const [selectedClass, setSelectedClass] = useState('');
             const [viewMode, setViewMode] = useState('card'); 
@@ -1841,6 +2124,8 @@
             const [toastMsg, setToastMsg] = useState('');
             const [batchField, setBatchField] = useState('regular1');
             const [docView, setDocView] = useState(null);
+            const [showSigModal, setShowSigModal] = useState(false);
+            const [showSwapExam, setShowSwapExam] = useState(false);
             const semesterOptions = getSemesterOptions();
             const semType = getSemesterType(semester);
 
@@ -1915,56 +2200,86 @@
                 }));
             }, [semester]); 
 
-            const handleExport = () => {
+            // 获取换考教师名
+            const swapTeacherOfClass = useMemo(() => {
+                const names = classStudents.map(s => s.scores.swapTeacher).filter(Boolean);
+                return [...new Set(names)][0] || '';
+            }, [classStudents]);
+
+            const handleExportComprehensive = async () => {
                 if (!selectedClass) return;
-                const exportData = classStudents.map((s, index) => {
-                    const finalScore = calculateFinalScore(s.scores, semType);
+                const defaultName = `${semester}-成绩表（综合平台）-${selectedClass}-${currentUser.name}`;
+                const fileName = prompt('导出文件名：', defaultName);
+                if (!fileName) return;
+
+                const cols = [
+                    { header: '序号', key: '序号', width: 6 }, { header: '行政班级', key: '行政班级', width: 14 },
+                    { header: '学号', key: '学号', width: 14 }, { header: '姓名', key: '姓名', width: 10 },
+                    { header: '性别', key: '性别', width: 6 }, { header: '平时1', key: '平时1', width: 8 },
+                    { header: '平时2', key: '平时2', width: 8 }, { header: '专项', key: '专项', width: 8 },
+                    { header: '统考', key: '统考', width: 8 }, { header: '晨跑(次数)', key: '晨跑(次数)', width: 10 },
+                    { header: '晨跑(成绩)', key: '晨跑(成绩)', width: 10 },
+                ];
+                if (semType === 'spring') cols.push({ header: '理论', key: '理论', width: 8 });
+                cols.push({ header: '总评', key: '总评', width: 8 });
+
+                const rows = classStudents.map((s, i) => {
                     const row = {
-                        '序号': index + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
-                        '平时1': s.scores.regular1, '平时2': s.scores.regular2,
+                        '序号': i + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
+                        '平时1': s.scores.regular1 || '', '平时2': s.scores.regular2 || '',
                         '专项': ((parseFloat(s.scores.special1||0) + parseFloat(s.scores.special2||0))/2).toFixed(1),
                         '统考': (((calculateStdTestScore(s.scores.rawItem1, getTestItemsName(semType, s.gender).item1, s.gender) || 0) + (calculateStdTestScore(s.scores.rawItem2, getTestItemsName(semType, s.gender).item2, s.gender) || 0)) / 2).toFixed(1),
-                        '晨跑(次数)': s.scores.runCount, '晨跑(成绩)': s.scores.runScore,
+                        '晨跑(次数)': s.scores.runCount || '', '晨跑(成绩)': s.scores.runScore || '',
                     };
-                    if (semType === 'spring') row['理论'] = s.scores.theory;
-                    row['总评'] = finalScore;
+                    if (semType === 'spring') row['理论'] = s.scores.theory || '';
+                    row['总评'] = calculateFinalScore(s.scores, semType);
                     return row;
                 });
-                const ws = XLSX.utils.json_to_sheet(exportData);
-                const range = XLSX.utils.decode_range(ws['!ref']);
-                const colMap = {};
-                for(let C = range.s.c; C <= range.e.c; ++C) {
-                    const cell = ws[XLSX.utils.encode_cell({r:0, c:C})];
-                    if(cell) colMap[cell.v] = C;
-                }
-                const colName = colMap['姓名'];
-                const colTotal = colMap['总评'];
-                const colRun = colMap['晨跑(成绩)'];
-
-                for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-                    const s = classStudents[R-1]; 
-                    if (!s) continue;
-                    const final = calculateFinalScore(s.scores, semType);
-                    const isTotalFail = parseFloat(final) < 60;
-                    const isRunFail = s.scores.isRunFailed;
-
-                    const colorCell = (c, r) => {
-                        const cellRef = XLSX.utils.encode_cell({c, r});
-                        if (!ws[cellRef]) ws[cellRef] = { t:'s', v: '' }; 
-                        ws[cellRef].s = { font: { color: { rgb: "FF0000" }, bold: true } };
-                    };
-
-                    if (isTotalFail) {
-                        if (colName !== undefined) colorCell(colName, R);
-                        if (colTotal !== undefined) colorCell(colTotal, R);
-                    }
-                    if (isRunFail && colRun !== undefined) { colorCell(colRun, R); }
-                }
-
-                const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, "成绩表");
-                XLSX.writeFile(wb, `${semester}-成绩表-${selectedClass}-${currentUser.name}.xlsx`);
+                await exportWithSignature('成绩表（综合平台）', cols, rows, fileName + '.xlsx', currentUser.name, swapTeacherOfClass);
             };
+
+            const handleExportDetailed = async () => {
+                if (!selectedClass) return;
+                const defaultName = `${semester}-成绩表（每项成绩）-${selectedClass}-${currentUser.name}`;
+                const fileName = prompt('导出文件名：', defaultName);
+                if (!fileName) return;
+
+                const testNames = getTestItemsName(semType, '男');
+                const cols = [
+                    { header: '序号', key: '序号', width: 6 }, { header: '行政班级', key: '行政班级', width: 14 },
+                    { header: '学号', key: '学号', width: 14 }, { header: '姓名', key: '姓名', width: 10 },
+                    { header: '性别', key: '性别', width: 6 }, { header: '平时1', key: '平时1', width: 8 },
+                    { header: '平时2', key: '平时2', width: 8 },
+                    { header: '专项1', key: '专项1', width: 8 }, { header: '专项2', key: '专项2', width: 8 },
+                    { header: `${testNames.display1}(原始)`, key: '统考1原始', width: 14 },
+                    { header: `${testNames.display1}(折算)`, key: '统考1折算', width: 14 },
+                    { header: `${testNames.display2}(原始)`, key: '统考2原始', width: 12 },
+                    { header: `${testNames.display2}(折算)`, key: '统考2折算', width: 12 },
+                    { header: '乐跑次数', key: '乐跑次数', width: 10 }, { header: '乐跑分数', key: '乐跑分数', width: 10 },
+                ];
+                if (semType === 'spring') cols.push({ header: '理论', key: '理论', width: 8 });
+
+                const rows = classStudents.map((s, i) => {
+                    const tn = getTestItemsName(semType, s.gender);
+                    const raw1 = s.scores.rawItem1 || '';
+                    const raw2 = s.scores.rawItem2 || '';
+                    const score1 = calculateStdTestScore(raw1, tn.item1, s.gender);
+                    const score2 = calculateStdTestScore(raw2, tn.item2, s.gender);
+                    const row = {
+                        '序号': i + 1, '行政班级': s.adminClass, '学号': s.id, '姓名': s.name, '性别': s.gender,
+                        '平时1': s.scores.regular1 || '', '平时2': s.scores.regular2 || '',
+                        '专项1': s.scores.special1 || '', '专项2': s.scores.special2 || '',
+                        '统考1原始': raw1, '统考1折算': score1 !== null ? score1 : '',
+                        '统考2原始': raw2, '统考2折算': score2 !== null ? score2 : '',
+                        '乐跑次数': s.scores.runCount || '', '乐跑分数': s.scores.runScore || '',
+                    };
+                    if (semType === 'spring') row['理论'] = s.scores.theory || '';
+                    return row;
+                });
+                await exportWithSignature('成绩表（每项成绩）', cols, rows, fileName + '.xlsx', currentUser.name, swapTeacherOfClass);
+            };
+
+            const [showExportMenu, setShowExportMenu] = useState(false);
 
             const batchOptions = [
                 { key: 'regular1', label: '平时分1' }, { key: 'regular2', label: '平时分2' },
@@ -2006,6 +2321,8 @@
                              <button onClick={() => setDocView('syllabus')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-600 text-xs font-bold whitespace-nowrap">教学大纲</button>
                              <button onClick={() => setDocView('schedule')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-purple-50 text-purple-600 text-xs font-bold whitespace-nowrap">教学进度表</button>
                              <button onClick={() => setDocView('plan')} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-teal-50 text-teal-600 text-xs font-bold whitespace-nowrap">教案</button>
+                             <button onClick={() => setShowSigModal(true)} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-pink-50 text-pink-600 text-xs font-bold whitespace-nowrap border border-pink-200">✍ 签名</button>
+                             <button onClick={() => setShowSwapExam(true)} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-green-50 text-green-700 text-xs font-bold whitespace-nowrap border border-green-200">🔄 换考</button>
                         </div>
                         <div className="px-3 py-2 bg-gray-50 flex items-center scrolling-wrapper gap-2">
                             <button onClick={() => setShowClaimModal(true)} className="flex-shrink-0 mr-3 px-3 py-1.5 rounded-full text-sm border border-dashed border-blue-400 text-blue-600 bg-blue-50 flex items-center gap-1 hover:bg-blue-100 whitespace-nowrap">认领班级</button>
@@ -2035,7 +2352,15 @@
                                                         <button onClick={() => setViewMode('card')} className={`px-3 py-1 text-xs rounded bg-blue-100 text-blue-700 font-bold`}>卡片模式</button>
                                                         <button onClick={() => setViewMode('batch')} className={`px-3 py-1 text-xs rounded text-gray-500`}>按项目录入</button>
                                                     </div>
-                                                    <button onClick={handleExport} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700"><Icon name="download" size={14}/> 导出</button>
+                                                    <div className="relative">
+                                                        <button onClick={() => setShowExportMenu(!showExportMenu)} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700"><Icon name="download" size={14}/> 导出 ▾</button>
+                                                        {showExportMenu && (
+                                                            <div className="absolute right-0 top-full mt-1 bg-white border rounded-lg shadow-lg z-50 w-48">
+                                                                <button onClick={() => { setShowExportMenu(false); handleExportComprehensive(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 rounded-t-lg">成绩表（综合平台）</button>
+                                                                <button onClick={() => { setShowExportMenu(false); handleExportDetailed(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 rounded-b-lg border-t">成绩表（每项成绩）</button>
+                                                            </div>
+                                                        )}
+                                                </div>
                                                 </div>
                                             </div>
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2149,6 +2474,8 @@
                     )}
                     
                     {toastMsg && <Toast msg={toastMsg} onClose={() => setToastMsg('')} />}
+                    {showSigModal && <SignatureUpload teacherName={currentUser.name} onClose={() => setShowSigModal(false)} />}
+                    {showSwapExam && <SwapExamModule currentUser={currentUser} students={students} setStudents={setStudents} semester={semester} sportsList={sportsList} specialtyConfig={specialtyConfig} onClose={() => setShowSwapExam(false)} />}
                 </div>
             );
         };
@@ -2164,6 +2491,7 @@
             const [adminPassword, setAdminPassword] = useState('admin888');
             const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
             const dataReadyRef = React.useRef(false); // 数据初始化完成标志
+            const initialLoadCountRef = React.useRef(0); // 初次加载学生数量（用于安全校验）
 
             // --- 初始化：从 Supabase 加载所有数据 ---
             useEffect(() => {
@@ -2178,22 +2506,40 @@
                             DB.getConfig('admin_password', 'admin888'),
                         ]);
                         if (dbTeachers && dbTeachers.length > 0) setTeachers(dbTeachers);
-                        if (dbStudents) setStudents(dbStudents);
+                        if (dbStudents === null) {
+                            // DB 连接失败（区别于"确实没有数据"）
+                            console.error('Supabase 返回 null，可能连接失败或项目已暂停');
+                            alert('⚠️ 数据库连接异常，数据可能未完整加载。\n请检查Supabase项目是否已暂停（免费版7天不活跃会暂停）。\n\n本次打开为只读模式，不会覆盖云端数据。');
+                            // 不设置 dataReadyRef = true，防止空数据覆盖
+                            setLoading(false);
+                            return;
+                        }
+                        setStudents(dbStudents);
+                        initialLoadCountRef.current = dbStudents.length;
+                        // 本地备份（用于灾难恢复）
+                        if (dbStudents.length > 0) {
+                            try { localStorage.setItem('pe_students_backup', JSON.stringify(dbStudents)); } catch(e) {}
+                        }
                         if (dbSportsList) setSportsList(dbSportsList);
                         if (dbSpecConfig) setConfig(dbSpecConfig);
                         if (dbAdminPwd) setAdminPassword(dbAdminPwd);
-                        // 等待一个短暂延迟，让所有 setState 完成渲染后再标记就绪
                         setTimeout(() => { dataReadyRef.current = true; }, 500);
                     } catch (err) {
                         console.error('初始化加载失败:', err);
+                        // 尝试本地备份恢复
                         try {
-                            const ls = JSON.parse(localStorage.getItem('pe_students'));
-                            if (ls && ls.length > 0) {
-                                setStudents(ls);
-                                alert('⚠️ 云端连接失败，已加载本地缓存数据。请检查 Supabase 配置。');
+                            const backup = JSON.parse(localStorage.getItem('pe_students_backup'));
+                            if (backup && backup.length > 0) {
+                                setStudents(backup);
+                                initialLoadCountRef.current = backup.length;
+                                alert('⚠️ 云端连接失败，已加载本地备份数据（' + backup.length + '条）。\n修改将在网络恢复后自动同步。');
+                                setTimeout(() => { dataReadyRef.current = true; }, 500);
+                            } else {
+                                alert('⚠️ 云端连接失败且无本地备份。请检查网络后刷新。');
                             }
-                        } catch(e) {}
-                        setTimeout(() => { dataReadyRef.current = true; }, 500);
+                        } catch(e) {
+                            alert('⚠️ 云端连接失败。请检查网络后刷新。');
+                        }
                     }
                     setLoading(false);
                 })();
@@ -2206,10 +2552,21 @@
             useEffect(() => {
                 // 数据未就绪前，不触发任何保存
                 if (!dataReadyRef.current) return;
+                // 安全校验：如果当前学生数远少于初始加载数，阻止保存并警告
+                if (initialLoadCountRef.current > 10 && students.length < initialLoadCountRef.current * 0.5) {
+                    console.error('安全拦截：当前数据(' + students.length + ')远少于初始加载(' + initialLoadCountRef.current + ')，跳过保存');
+                    setSaveStatus('error');
+                    setSaveError('数据异常减少，已阻止保存以防数据丢失。请刷新页面。');
+                    return;
+                }
                 if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
                 setSaveStatus('saving');
                 saveTimerRef.current = setTimeout(async () => {
                     try {
+                        // 保存前先更新本地备份
+                        if (students.length > 0) {
+                            try { localStorage.setItem('pe_students_backup', JSON.stringify(students)); } catch(e) {}
+                        }
                         await DB.saveStudents(students);
                         setSaveStatus('saved');
                         saveRetryCount.current = 0;
@@ -2219,7 +2576,6 @@
                         console.error('保存失败:', err);
                         setSaveError(err.message || '未知错误');
                         setSaveStatus('error');
-                        // 自动重试一次（3秒后）
                         if (saveRetryCount.current < 1) {
                             saveRetryCount.current++;
                             setTimeout(async () => {
@@ -2320,6 +2676,7 @@
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<ErrorBoundary><App /></ErrorBoundary>);
+
     </script>
 </body>
 </html>
