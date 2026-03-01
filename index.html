@@ -89,6 +89,31 @@
         const SUPABASE_ANON_KEY = 'sb_publishable_HD6i11vRDnUCAIl1hYaZ1w_8DdEbkLW';
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+        // --- Supabase Auth 配置（RLS 安全策略所需）---
+        // ⚠️ 部署前请修改为你在 Supabase Dashboard 中创建的应用账户
+        const APP_AUTH_EMAIL = 'pe-app@school.local';
+        const APP_AUTH_PASSWORD = 'PeGrade2025Secure!';  // 改成你的实际密码
+
+        // 应用启动时自动登录 Supabase Auth，获取 authenticated 角色
+        async function ensureAuth() {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session) return true; // 已有会话
+                const { error } = await supabase.auth.signInWithPassword({
+                    email: APP_AUTH_EMAIL,
+                    password: APP_AUTH_PASSWORD,
+                });
+                if (error) {
+                    console.error('Supabase Auth 登录失败:', error.message);
+                    return false;
+                }
+                return true;
+            } catch (e) {
+                console.error('Auth 异常:', e);
+                return false;
+            }
+        }
+
         // =============================================================
         // Supabase 数据库操作层
         // =============================================================
@@ -2218,7 +2243,6 @@
                     { header: '性别', key: '性别', width: 6 }, { header: '平时1', key: '平时1', width: 8 },
                     { header: '平时2', key: '平时2', width: 8 }, { header: '专项', key: '专项', width: 8 },
                     { header: '统考', key: '统考', width: 8 }, { header: '晨跑(次数)', key: '晨跑(次数)', width: 10 },
-                    { header: '晨跑(成绩)', key: '晨跑(成绩)', width: 10 },
                 ];
                 if (semType === 'spring') cols.push({ header: '理论', key: '理论', width: 8 });
                 cols.push({ header: '总评', key: '总评', width: 8 });
@@ -2229,7 +2253,7 @@
                         '平时1': s.scores.regular1 || '', '平时2': s.scores.regular2 || '',
                         '专项': ((parseFloat(s.scores.special1||0) + parseFloat(s.scores.special2||0))/2).toFixed(1),
                         '统考': (((calculateStdTestScore(s.scores.rawItem1, getTestItemsName(semType, s.gender).item1, s.gender) || 0) + (calculateStdTestScore(s.scores.rawItem2, getTestItemsName(semType, s.gender).item2, s.gender) || 0)) / 2).toFixed(1),
-                        '晨跑(次数)': s.scores.runCount || '', '晨跑(成绩)': s.scores.runScore || '',
+                        '晨跑(次数)': s.scores.runCount || '',
                     };
                     if (semType === 'spring') row['理论'] = s.scores.theory || '';
                     row['总评'] = calculateFinalScore(s.scores, semType);
@@ -2240,7 +2264,7 @@
 
             const handleExportDetailed = async () => {
                 if (!selectedClass) return;
-                const defaultName = `${semester}-成绩表（每项成绩）-${selectedClass}-${currentUser.name}`;
+                const defaultName = `${semester}-成绩明细表-${selectedClass}-${currentUser.name}`;
                 const fileName = prompt('导出文件名：', defaultName);
                 if (!fileName) return;
 
@@ -2276,7 +2300,7 @@
                     if (semType === 'spring') row['理论'] = s.scores.theory || '';
                     return row;
                 });
-                await exportWithSignature('成绩表（每项成绩）', cols, rows, fileName + '.xlsx', currentUser.name, swapTeacherOfClass);
+                await exportWithSignature('成绩明细表', cols, rows, fileName + '.xlsx', currentUser.name, swapTeacherOfClass);
             };
 
             const [showExportMenu, setShowExportMenu] = useState(false);
@@ -2357,7 +2381,7 @@
                                                         {showExportMenu && (
                                                             <div className="absolute right-0 top-full mt-1 bg-white border rounded-lg shadow-lg z-50 w-48">
                                                                 <button onClick={() => { setShowExportMenu(false); handleExportComprehensive(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 rounded-t-lg">成绩表（综合平台）</button>
-                                                                <button onClick={() => { setShowExportMenu(false); handleExportDetailed(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 rounded-b-lg border-t">成绩表（每项成绩）</button>
+                                                                <button onClick={() => { setShowExportMenu(false); handleExportDetailed(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 rounded-b-lg border-t">成绩明细表</button>
                                                             </div>
                                                         )}
                                                 </div>
@@ -2493,10 +2517,16 @@
             const dataReadyRef = React.useRef(false); // 数据初始化完成标志
             const initialLoadCountRef = React.useRef(0); // 初次加载学生数量（用于安全校验）
 
-            // --- 初始化：从 Supabase 加载所有数据 ---
+            // --- 初始化：先认证，再从 Supabase 加载所有数据 ---
             useEffect(() => {
                 (async () => {
                     setLoading(true);
+                    // [1] 先完成 Supabase Auth 登录（RLS 要求 authenticated 角色）
+                    var authOk = await ensureAuth();
+                    if (!authOk) {
+                        console.warn('Supabase Auth 未通过，可能 RLS 尚未配置或账户未创建，继续尝试加载...');
+                    }
+                    // [2] 加载数据
                     try {
                         const [dbTeachers, dbStudents, dbSportsList, dbSpecConfig, dbAdminPwd] = await Promise.all([
                             DB.getTeachers(),
